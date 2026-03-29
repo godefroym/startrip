@@ -137,6 +137,7 @@ def build_query(
     return f"""
 SELECT TOP {int(limit)}
   g.source_id,
+  g.designation,
   g.ra,
   g.dec,
   g.parallax,
@@ -148,12 +149,18 @@ SELECT TOP {int(limit)}
   g.phot_rp_mean_mag,
   g.bp_rp,
   g.ruwe,
+  hip.original_ext_source_id AS hip_id,
+  tyc.original_ext_source_id AS tyc_id,
   ap.teff_gspphot,
   ap.radius_flame,
   ap.lum_flame
 FROM gaiadr3.gaia_source AS g
 LEFT JOIN gaiadr3.astrophysical_parameters AS ap
   ON g.source_id = ap.source_id
+LEFT JOIN gaiadr3.hipparcos2_best_neighbour AS hip
+  ON g.source_id = hip.source_id
+LEFT JOIN gaiadr3.tycho2tdsc_merge_best_neighbour AS tyc
+  ON g.source_id = tyc.source_id
 WHERE g.parallax >= {min_parallax_mas:.6f}
   AND g.parallax_over_error >= {float(min_parallax_over_error):.2f}
   AND g.ruwe < {float(max_ruwe):.2f}
@@ -259,9 +266,12 @@ def row_to_star(row: dict[str, str]) -> dict[str, object]:
 
     return {
         "id": row["source_id"],
-        "name": f"Gaia DR3 {row['source_id']}",
+        "name": row.get("designation") or f"Gaia DR3 {row['source_id']}",
         "sourceId": row["source_id"],
         "sourceCatalog": "Gaia DR3",
+        "designation": row.get("designation") or f"Gaia DR3 {row['source_id']}",
+        "hipId": row.get("hip_id") or None,
+        "tycId": row.get("tyc_id") or None,
         "distanceLy": round(distance_ly, 6),
         "distancePc": round(distance_pc, 6),
         "raDeg": round(ra_deg, 9),

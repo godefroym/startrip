@@ -11,6 +11,8 @@ const densityRange = document.querySelector("#densityRange");
 const densityValue = document.querySelector("#densityValue");
 const sizeRange = document.querySelector("#sizeRange");
 const sizeValue = document.querySelector("#sizeValue");
+const sizeMode = document.querySelector("#sizeMode");
+const sizeModeValue = document.querySelector("#sizeModeValue");
 const boundaryToggle = document.querySelector("#boundaryToggle");
 const shellToggle = document.querySelector("#shellToggle");
 const labelsToggle = document.querySelector("#labelsToggle");
@@ -58,15 +60,47 @@ const tmpC = new THREE.Vector3();
 const cameraTarget = new THREE.Vector3();
 const lookTarget = new THREE.Vector3();
 
+const SIZE_MODE_PROFILES = {
+  realistic: {
+    label: "Realiste",
+    starScale: 0.55,
+    sunCoreScale: 0.42,
+    sunGlowScale: 0.38,
+    sunLightScale: 0.65,
+  },
+  readable: {
+    label: "Lisible",
+    starScale: 1,
+    sunCoreScale: 0.32,
+    sunGlowScale: 0.3,
+    sunLightScale: 0.78,
+  },
+  cinematic: {
+    label: "Cinematique",
+    starScale: 1.85,
+    sunCoreScale: 0.36,
+    sunGlowScale: 0.35,
+    sunLightScale: 0.92,
+  },
+};
+
 const groups = {
   boundary: new THREE.Group(),
   deepSky: new THREE.Group(),
   synthetic: new THREE.Group(),
   named: new THREE.Group(),
   labels: new THREE.Group(),
+  selection: new THREE.Group(),
 };
 
-scene.add(groups.deepSky, groups.boundary, groups.synthetic, groups.named, groups.labels);
+scene.add(
+  groups.deepSky,
+  groups.boundary,
+  groups.synthetic,
+  groups.named,
+  groups.labels,
+  groups.selection,
+);
 scene.add(createBackgroundHalo());
 
 const ambientLight = new THREE.HemisphereLight(0x8fb7ff, 0x08101d, 0.65);
@@ -88,6 +122,8 @@ const state = {
   gaiaCatalog: [],
   gaiaMeta: null,
   labelStars: [],
+  sunAnchor: null,
+  selectionLabel: null,
 };
 
 const starMaterial = createStarMaterial();
@@ -106,6 +142,11 @@ densityRange.addEventListener("input", () => {
 
 sizeRange.addEventListener("input", () => {
   refreshSizeLabel();
+  applySizeScale();
+});
+
+sizeMode.addEventListener("change", () => {
+  refreshSizeModeLabel();
   applySizeScale();
 });
 
@@ -137,6 +178,7 @@ init();
 async function init() {
   refreshDensityLabel();
   refreshSizeLabel();
+  refreshSizeModeLabel();
   await loadGaiaCatalog();
   rebuildSimulation();
   resetShip(true);
@@ -165,6 +207,7 @@ function rebuildSimulation() {
   rebuildSyntheticStars();
   rebuildNamedPresentation();
   rebuildDeepSky();
+  applySizeScale();
   const totalStars = state.gaiaCatalog.length > 0
     ? state.syntheticStars.length + 1
     : state.syntheticStars.length + state.namedStars.length;
@@ -203,9 +246,12 @@ function rebuildSyntheticStars() {
 function rebuildNamedPresentation() {
   clearGroup(groups.named);
   clearGroup(groups.labels);
+  clearGroup(groups.selection);
   state.labelStars = [];
+  state.selectionLabel = null;
 
-  groups.named.add(createSunAnchor());
+  state.sunAnchor = createSunAnchor();
+  groups.named.add(state.sunAnchor);
 
   if (state.gaiaCatalog.length === 0) {
     state.namedPoints = createPointCloud(state.namedStars, {
@@ -217,8 +263,10 @@ function rebuildNamedPresentation() {
     state.labelStars = state.namedStars.filter((star) => star.name !== "Soleil");
   } else {
     state.namedPoints = null;
-    const labeledGaiaStars = state.syntheticStars.filter((star) => star.displayName);
-    const labeledNames = new Set(labeledGaiaStars.map((star) => star.displayName));
+    const labeledGaiaStars = state.syntheticStars.filter((star) => star.tagName);
+    const labeledNames = new Set(
+      labeledGaiaStars.map((star) => star.tagName ?? star.displayName ?? star.name),
+    );
     const unmatchedNamedStars = state.namedStars.filter(
       (star) => star.name !== "Soleil" && !labeledNames.has(star.name),
     );
@@ -226,9 +274,9 @@ function rebuildNamedPresentation() {
   }
 
   state.labelStars.forEach((star) => {
-    const label = createLabelSprite(star.displayName ?? star.name);
+    const label = createLabelSprite(star.tagName ?? star.displayName ?? star.name);
     label.position.copy(star.position).add(new THREE.Vector3(0, 1.4, 0));
-    label.scale.set(8, 2.1, 1);
+    setLabelSpriteScale(label, 2.1);
     groups.labels.add(label);
   });
 
@@ -342,6 +390,8 @@ function enrichStar(star) {
     apparentMagnitude,
     visualBrightness,
     renderSize,
+    tagName: star.tagName
+      ?? (!star.synthetic && !star.sourceCatalog && star.name !== "Soleil" ? star.name : null),
     twinkle: Math.random(),
   };
 }
@@ -623,8 +673,25 @@ function refreshSizeLabel() {
   sizeValue.textContent = `${Number.parseFloat(sizeRange.value).toFixed(1)}x`;
 }
 
+function refreshSizeModeLabel() {
+  sizeModeValue.textContent = getSizeModeProfile().label;
+}
+
 function applySizeScale() {
-  starMaterial.uniforms.uSizeScale.value = Number.parseFloat(sizeRange.value);
+  const sliderScale = Number.parseFloat(sizeRange.value);
+  const profile = getSizeModeProfile();
+  starMaterial.uniforms.uSizeScale.value = sliderScale * profile.starScale;
+
+  if (state.sunAnchor?.userData) {
+    const coreScale = profile.sunCoreScale * Math.pow(sliderScale, 0.2);
+    const glowScale = state.sunAnchor.userData.baseGlowScale * profile.sunGlowScale;
+    state.sunAnchor.userData.core.scale.setScalar(coreScale);
+    state.sunAnchor.userData.glow.scale.set(glowScale, glowScale, 1);
+    state.sunAnchor.userData.light.intensity =
+      state.sunAnchor.userData.baseLightIntensity * profile.sunLightScale;
+  }
+
+  updateSelectionLabel(state.selectedStar);
 }
 
 function setStatus(message) {
@@ -668,8 +735,9 @@ function setSelectedStar(star) {
     return;
   }
 
+  const changedStar = state.selectedStar !== star;
   state.selectedStar = star;
-  selectedName.textContent = star.displayName ?? star.name;
+  selectedName.textContent = getStarDisplayName(star);
   selectedName.style.color = star.colorHex ?? "#f5f8ff";
 
   const distanceFromShipLy = state.ship
@@ -677,6 +745,9 @@ function setSelectedStar(star) {
     : 0;
 
   selectedMeta.textContent = formatSelectedStarMeta(star, distanceFromShipLy);
+  if (changedStar) {
+    updateSelectionLabel(star);
+  }
 }
 
 function createSunAnchor() {
@@ -704,6 +775,13 @@ function createSunAnchor() {
   const light = new THREE.PointLight(0xffcf8c, 1.6, 90, 2);
 
   sun.add(core, glow, light);
+  sun.userData = {
+    core,
+    glow,
+    light,
+    baseGlowScale: 13,
+    baseLightIntensity: 1.6,
+  };
   return sun;
 }
 
@@ -851,34 +929,42 @@ function createGlowTexture() {
 }
 
 function createLabelSprite(text) {
+  const probeCanvas = document.createElement("canvas");
+  const probeContext = probeCanvas.getContext("2d");
+  probeContext.font = "600 28px 'IBM Plex Sans'";
+  const measuredWidth = Math.ceil(probeContext.measureText(text).width);
+  const width = THREE.MathUtils.clamp(measuredWidth + 84, 240, 640);
+  const height = 96;
   const canvas = document.createElement("canvas");
-  canvas.width = 384;
-  canvas.height = 96;
+  canvas.width = width;
+  canvas.height = height;
   const context = canvas.getContext("2d");
 
   context.fillStyle = "rgba(5, 10, 24, 0.75)";
-  roundRect(context, 8, 18, 368, 60, 18);
+  roundRect(context, 8, 18, width - 16, 60, 18);
   context.fill();
 
   context.strokeStyle = "rgba(139, 229, 255, 0.35)";
   context.lineWidth = 2;
-  roundRect(context, 8, 18, 368, 60, 18);
+  roundRect(context, 8, 18, width - 16, 60, 18);
   context.stroke();
 
   context.fillStyle = "#f5f8ff";
   context.font = "600 28px 'IBM Plex Sans'";
   context.textAlign = "center";
   context.textBaseline = "middle";
-  context.fillText(text, 192, 48);
+  context.fillText(text, width / 2, height / 2);
 
   const texture = new THREE.CanvasTexture(canvas);
-  return new THREE.Sprite(
+  const sprite = new THREE.Sprite(
     new THREE.SpriteMaterial({
       map: texture,
       transparent: true,
       depthWrite: false,
     }),
   );
+  sprite.userData.aspect = width / height;
+  return sprite;
 }
 
 function roundRect(context, x, y, width, height, radius) {
@@ -920,6 +1006,14 @@ function formatSelectedStarMeta(star, distanceFromShipLy) {
 
   if (star.displayName && star.name && star.displayName !== star.name) {
     parts.push(star.name);
+  }
+
+  if (star.hipId) {
+    parts.push(`HIP ${star.hipId}`);
+  } else if (star.tycId) {
+    parts.push(`TYC ${star.tycId}`);
+  } else if (star.designation && star.designation !== star.name) {
+    parts.push(star.designation);
   }
 
   return parts.join(" | ");
@@ -983,14 +1077,20 @@ function brightnessLabelFromMagnitude(apparentMagnitude) {
 }
 
 function applyKnownNameToGaiaStar(star) {
+  const catalogLabel = getCatalogLabel(star);
   const match = findKnownNamedStarFor(star);
   if (!match || match.name === "Soleil") {
-    return star;
+    return {
+      ...star,
+      catalogLabel,
+    };
   }
 
   return {
     ...star,
+    catalogLabel,
     displayName: match.name,
+    tagName: match.name,
   };
 }
 
@@ -1041,6 +1141,81 @@ function temperatureToColor(temperature) {
     THREE.MathUtils.clamp(green, 0, 255) / 255,
     THREE.MathUtils.clamp(blue, 0, 255) / 255,
   );
+}
+
+function getSizeModeProfile() {
+  return SIZE_MODE_PROFILES[sizeMode.value] ?? SIZE_MODE_PROFILES.readable;
+}
+
+function getCatalogLabel(star) {
+  if (star.catalogLabel) {
+    return star.catalogLabel;
+  }
+  if (star.hipId) {
+    return `HIP ${star.hipId}`;
+  }
+  if (star.tycId) {
+    return `TYC ${star.tycId}`;
+  }
+  return star.designation ?? star.name;
+}
+
+function getStarDisplayName(star) {
+  return star.displayName ?? getCatalogLabel(star);
+}
+
+function getStarTagText(star) {
+  if (!star) {
+    return null;
+  }
+
+  if (star.tagName) {
+    return star.tagName;
+  }
+
+  if (star.hipId) {
+    return `HIP ${star.hipId}`;
+  }
+
+  if (star.tycId) {
+    return `TYC ${star.tycId}`;
+  }
+
+  return null;
+}
+
+function getSelectionLabelOffset(star) {
+  if (!star) {
+    return 2;
+  }
+
+  if (star.name === "Soleil") {
+    const sunScale = state.sunAnchor?.userData?.core?.scale.x ?? 0.32;
+    return 2.8 + sunScale * 4.5;
+  }
+
+  return THREE.MathUtils.clamp((star.renderSize ?? 3) * 0.4, 1.5, 4);
+}
+
+function updateSelectionLabel(star) {
+  clearGroup(groups.selection);
+  state.selectionLabel = null;
+
+  const text = getStarTagText(star);
+  if (!text) {
+    return;
+  }
+
+  const label = createLabelSprite(text);
+  label.position.copy(star.position).add(new THREE.Vector3(0, getSelectionLabelOffset(star), 0));
+  setLabelSpriteScale(label, 2.3);
+  groups.selection.add(label);
+  state.selectionLabel = label;
+}
+
+function setLabelSpriteScale(label, height) {
+  const aspect = label.userData.aspect ?? 4;
+  label.scale.set(height * aspect, height, 1);
 }
 
 function mulberry32(seed) {

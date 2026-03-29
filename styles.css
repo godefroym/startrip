@@ -31,6 +31,7 @@ body {
 
 button,
 input,
+select,
 label {
   font: inherit;
 }
@@ -149,6 +150,22 @@ h2 {
 input[type="range"] {
   width: 100%;
   accent-color: var(--accent);
+}
+
+select {
+  min-height: 42px;
+  width: 100%;
+  padding: 0 14px;
+  border-radius: 14px;
+  border: 1px solid rgba(160, 212, 255, 0.2);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text);
+  outline: none;
+}
+
+select:focus {
+  border-color: rgba(139, 229, 255, 0.52);
+  box-shadow: 0 0 0 3px rgba(139, 229, 255, 0.12);
 }
 
 .toggle-list {
