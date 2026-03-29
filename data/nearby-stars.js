@@ -53,7 +53,7 @@ export function createSyntheticPopulation(count, radiusLy, seed = 7) {
     const distanceLy = radiusLy * Math.cbrt(random());
     const raDeg = random() * 360;
     const decDeg = Math.asin(random() * 2 - 1) * (180 / Math.PI);
-    const family = pickFamily(random());
+    const family = pickFamily(random);
     const radiusSolar = family.radiusMin + (family.radiusMax - family.radiusMin) * random();
     const temperatureK = Math.round(family.tempMin + (family.tempMax - family.tempMin) * random());
 
