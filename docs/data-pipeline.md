@@ -18,6 +18,8 @@ On se limite a un bubble de `100 annees-lumiere` autour du Soleil pour la naviga
 - parallaxe `parallax`
 - photometrie `phot_g_mean_mag`
 - couleurs comme `bp_rp`
+- temperature `teff_gspphot`
+- rayon `radius_flame`
 
 `JWST` et `ESO` sont excellents pour la richesse visuelle :
 
@@ -66,6 +68,16 @@ Sorties :
 - `data/generated/gaia-nearby-stars.csv`
 
 Le front tente de charger automatiquement le JSON genere.
+
+Le JSON exporte inclut aussi des champs prets pour le rendu du jeu :
+
+- `radiusSolar`
+- `radiusSource`
+- `temperatureK`
+- `temperatureSource`
+- `colorRgb`
+- `colorHex`
+- `colorSource`
 
 ## Esquisse de requete Gaia
 

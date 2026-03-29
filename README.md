@@ -35,6 +35,12 @@ Le script ecrit :
 
 Le front charge automatiquement `data/generated/gaia-nearby-stars.json` s'il existe. Sinon, il retombe sur le champ synthetique.
 
+Le JSON Gaia expose aussi des champs de rendu deja prets :
+
+- `radiusSolar` et `radiusSource`
+- `temperatureK` et `temperatureSource`
+- `colorRgb`, `colorHex` et `colorSource`
+
 Workflow local :
 
 ```bash
@@ -61,7 +67,7 @@ Le catalogue d'etoiles nommees est un echantillon de demarrage et les etoiles de
 ## Suite logique
 
 - enrichir le bubble `Gaia` avec noms usuels et selections plus riches
-- estimer couleurs, rayons et classes depuis les champs photometriques
+- raffiner encore les couleurs et rayons issus des champs Gaia
 - projeter des tuiles `JWST` ou `ESO` sur une enveloppe du ciel lointain
 - streamer des volumes voisins quand le joueur atteint la limite
 

@@ -211,20 +211,39 @@ def row_to_star(row: dict[str, str]) -> dict[str, object]:
     ra_deg = parse_float(row.get("ra"))
     dec_deg = parse_float(row.get("dec"))
     bp_rp = parse_float(row.get("bp_rp"))
-    temperature_k = (
-        parse_float(row.get("teff_gspphot"))
-        or estimate_temperature_from_bp_rp(bp_rp)
-        or SUN_TEMPERATURE_K
-    )
+    explicit_temperature = parse_float(row.get("teff_gspphot"))
+    estimated_temperature = estimate_temperature_from_bp_rp(bp_rp)
+    if explicit_temperature is not None:
+        temperature_k = explicit_temperature
+        temperature_source = "teff_gspphot"
+        color_source = "teff_gspphot_blackbody"
+    elif estimated_temperature is not None:
+        temperature_k = estimated_temperature
+        temperature_source = "bp_rp_estimate"
+        color_source = "bp_rp_estimate_blackbody"
+    else:
+        temperature_k = SUN_TEMPERATURE_K
+        temperature_source = "solar_default"
+        color_source = "solar_default_blackbody"
+
     lum_solar = estimate_luminosity(row, parallax)
-    radius_solar = (
-        parse_float(row.get("radius_flame"))
-        or estimate_radius_from_luminosity_and_temperature(lum_solar, temperature_k)
-        or default_radius_for_temperature(temperature_k)
-    )
+    explicit_radius = parse_float(row.get("radius_flame"))
+    estimated_radius = estimate_radius_from_luminosity_and_temperature(lum_solar, temperature_k)
+    if explicit_radius is not None:
+        radius_solar = explicit_radius
+        radius_source = "radius_flame"
+    elif estimated_radius is not None:
+        radius_solar = estimated_radius
+        radius_source = "luminosity_temperature_estimate"
+    else:
+        radius_solar = default_radius_for_temperature(temperature_k)
+        radius_source = "temperature_default"
+
     distance_pc = 1000.0 / parallax
     distance_ly = distance_pc * PARSEC_TO_LIGHTYEAR
     x, y, z = spherical_to_cartesian(distance_ly, ra_deg, dec_deg)
+    color_rgb = color_temperature_to_rgb(temperature_k)
+    color_hex = rgb_to_hex(color_rgb)
 
     return {
         "id": row["source_id"],
@@ -239,8 +258,13 @@ def row_to_star(row: dict[str, str]) -> dict[str, object]:
         "y": round(y, 6),
         "z": round(z, 6),
         "radiusSolar": round(radius_solar, 6),
+        "radiusSource": radius_source,
         "temperatureK": round(temperature_k, 3),
+        "temperatureSource": temperature_source,
         "type": spectral_type_from_temperature(temperature_k),
+        "colorRgb": color_rgb,
+        "colorHex": color_hex,
+        "colorSource": color_source,
         "bpRp": bp_rp,
         "photGMeanMag": parse_float(row.get("phot_g_mean_mag")),
         "photBpMeanMag": parse_float(row.get("phot_bp_mean_mag")),
@@ -279,7 +303,7 @@ def estimate_temperature_from_bp_rp(bp_rp: float | None) -> float | None:
 
 def estimate_luminosity(row: dict[str, str], parallax_mas: float) -> float | None:
     lum = parse_float(row.get("lum_flame"))
-    if lum:
+    if lum is not None:
         return lum
 
     phot_g = parse_float(row.get("phot_g_mean_mag"))
@@ -331,6 +355,33 @@ def spectral_type_from_temperature(temperature_k: float) -> str:
     if temperature_k >= 3700:
         return "K"
     return "M"
+
+
+def color_temperature_to_rgb(temperature_k: float) -> dict[str, int]:
+    kelvin = max(10.0, temperature_k / 100.0)
+
+    if kelvin <= 66:
+        red = 255.0
+        green = 99.4708025861 * math.log(kelvin) - 161.1195681661
+        blue = 0.0 if kelvin <= 19 else 138.5177312231 * math.log(kelvin - 10.0) - 305.0447927307
+    else:
+        red = 329.698727446 * math.pow(kelvin - 60.0, -0.1332047592)
+        green = 288.1221695283 * math.pow(kelvin - 60.0, -0.0755148492)
+        blue = 255.0
+
+    return {
+        "r": clamp_channel(red),
+        "g": clamp_channel(green),
+        "b": clamp_channel(blue),
+    }
+
+
+def rgb_to_hex(rgb: dict[str, int]) -> str:
+    return f"#{rgb['r']:02x}{rgb['g']:02x}{rgb['b']:02x}"
+
+
+def clamp_channel(value: float) -> int:
+    return int(max(0, min(255, round(value))))
 
 
 def parse_float(value: str | None) -> float | None:

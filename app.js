@@ -279,7 +279,9 @@ function enrichStar(star) {
     : star.distanceLy === 0
       ? { x: 0, y: 0, z: 0 }
       : sphericalToCartesian(star.distanceLy, star.raDeg, star.decDeg);
-  const color = temperatureToColor(star.temperatureK);
+  const color = star.colorRgb
+    ? rgbToThreeColor(star.colorRgb)
+    : temperatureToColor(star.temperatureK);
   const renderSize = THREE.MathUtils.clamp(
     Math.pow(star.radiusSolar, 0.42) * (star.synthetic ? 2.2 : 4.6),
     star.synthetic ? 1.3 : 3,
@@ -601,14 +603,13 @@ function setSelectedStar(star) {
 
   state.selectedStar = star;
   selectedName.textContent = star.name;
+  selectedName.style.color = star.colorHex ?? "#f5f8ff";
 
   const distanceFromShip = state.ship
     ? state.ship.position.distanceTo(star.position).toFixed(1)
     : "0.0";
 
-  selectedMeta.textContent =
-    `${star.type} • ${star.distanceLy.toFixed(2)} a.l. du Soleil • ` +
-    `${Math.round(star.temperatureK)} K • ${distanceFromShip} a.l. du vaisseau`;
+  selectedMeta.textContent = formatSelectedStarMeta(star, distanceFromShip);
 }
 
 function createSunAnchor() {
@@ -818,6 +819,32 @@ function roundRect(context, x, y, width, height, radius) {
   context.lineTo(x, y + radius);
   context.quadraticCurveTo(x, y, x + radius, y);
   context.closePath();
+}
+
+function formatSelectedStarMeta(star, distanceFromShip) {
+  const parts = [
+    star.type,
+    `${star.distanceLy.toFixed(2)} a.l. du Soleil`,
+    `${Math.round(star.temperatureK)} K`,
+    `${star.radiusSolar.toFixed(2)} Rsol`,
+    `${distanceFromShip} a.l. du vaisseau`,
+  ];
+
+  if (star.radiusSource === "radius_flame") {
+    parts.push("rayon Gaia");
+  }
+
+  if (star.colorSource === "teff_gspphot_blackbody") {
+    parts.push("couleur Gaia");
+  } else if (star.colorSource === "bp_rp_estimate_blackbody") {
+    parts.push("couleur estimee");
+  }
+
+  return parts.join(" | ");
+}
+
+function rgbToThreeColor(rgb) {
+  return new THREE.Color(rgb.r / 255, rgb.g / 255, rgb.b / 255);
 }
 
 function temperatureToColor(temperature) {
