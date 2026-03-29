@@ -13,8 +13,12 @@ const sizeRange = document.querySelector("#sizeRange");
 const sizeValue = document.querySelector("#sizeValue");
 const sizeMode = document.querySelector("#sizeMode");
 const sizeModeValue = document.querySelector("#sizeModeValue");
+const zoomRange = document.querySelector("#zoomRange");
+const zoomValue = document.querySelector("#zoomValue");
 const boundaryToggle = document.querySelector("#boundaryToggle");
 const shellToggle = document.querySelector("#shellToggle");
+const gasToggle = document.querySelector("#gasToggle");
+const exoplanetToggle = document.querySelector("#exoplanetToggle");
 const labelsToggle = document.querySelector("#labelsToggle");
 const resetShipButton = document.querySelector("#resetShip");
 const sunViewButton = document.querySelector("#sunView");
@@ -60,6 +64,11 @@ const tmpC = new THREE.Vector3();
 const cameraTarget = new THREE.Vector3();
 const lookTarget = new THREE.Vector3();
 const PERSISTENT_LABEL_RADIUS_LY = 10;
+const AU_TO_LIGHTYEAR = 1.58125074098e-5;
+const EXOPLANET_ORBIT_MIN = 0.28;
+const EXOPLANET_ORBIT_MAX = 4.2;
+const HOT_PLASMA_TEMPERATURE_K = 1100000;
+const WARM_PLASMA_TEMPERATURE_K = 12000;
 
 const SIZE_MODE_PROFILES = {
   realistic: {
@@ -90,6 +99,8 @@ const groups = {
   deepSky: new THREE.Group(),
   synthetic: new THREE.Group(),
   named: new THREE.Group(),
+  exoplanets: new THREE.Group(),
+  gas: new THREE.Group(),
   labels: new THREE.Group(),
   selection: new THREE.Group(),
 };
@@ -99,6 +110,8 @@ scene.add(
   groups.boundary,
   groups.synthetic,
   groups.named,
+  groups.exoplanets,
+  groups.gas,
   groups.labels,
   groups.selection,
 );
@@ -108,6 +121,8 @@ const ambientLight = new THREE.HemisphereLight(0x8fb7ff, 0x08101d, 0.65);
 const keyLight = new THREE.DirectionalLight(0xffdfb0, 1.1);
 keyLight.position.set(12, 16, 9);
 scene.add(ambientLight, keyLight);
+const cloudSpriteTexture = createCloudTexture();
+const glowSpriteTexture = createGlowTexture();
 
 const state = {
   velocity: new THREE.Vector3(),
@@ -122,6 +137,12 @@ const state = {
   deepSkyPoints: null,
   gaiaCatalog: [],
   gaiaMeta: null,
+  exoplanetCatalog: [],
+  exoplanetMeta: null,
+  exoplanetObjects: [],
+  exoplanetCountsByStarId: new Map(),
+  exoplanetCountsByName: new Map(),
+  gasDensityMap: null,
   labelStars: [],
   labelSignature: "",
   sunAnchor: null,
@@ -133,6 +154,7 @@ const starMaterial = createStarMaterial();
 createShip();
 buildBoundary();
 renderer.domElement.addEventListener("pointermove", handlePointerMove);
+renderer.domElement.addEventListener("wheel", handleWheel, { passive: false });
 window.addEventListener("resize", onResize);
 window.addEventListener("keydown", onKeyDown);
 window.addEventListener("keyup", (event) => keys.delete(event.code));
@@ -152,12 +174,25 @@ sizeMode.addEventListener("change", () => {
   applySizeScale();
 });
 
+zoomRange.addEventListener("input", () => {
+  refreshZoomLabel();
+  applyZoom();
+});
+
 boundaryToggle.addEventListener("change", () => {
   groups.boundary.visible = boundaryToggle.checked;
 });
 
 shellToggle.addEventListener("change", () => {
   groups.deepSky.visible = shellToggle.checked;
+});
+
+gasToggle.addEventListener("change", () => {
+  groups.gas.visible = gasToggle.checked;
+});
+
+exoplanetToggle.addEventListener("change", () => {
+  groups.exoplanets.visible = exoplanetToggle.checked;
 });
 
 labelsToggle.addEventListener("change", () => {
@@ -183,10 +218,16 @@ async function init() {
   refreshDensityLabel();
   refreshSizeLabel();
   refreshSizeModeLabel();
-  await loadGaiaCatalog();
+  refreshZoomLabel();
+  await Promise.all([
+    loadGaiaCatalog(),
+    loadExoplanetCatalog(),
+    loadGasDensityMap(),
+  ]);
   rebuildSimulation();
   resetShip(true);
   applySizeScale();
+  applyZoom();
   animate();
 }
 
@@ -200,6 +241,7 @@ function animate() {
   updateShip(delta);
   updatePersistentLabels();
   updateCamera(delta);
+  updateExoplanets(elapsed);
   updateDeepSky(elapsed);
   updateSelection();
   updateHud();
@@ -211,12 +253,24 @@ function rebuildSimulation() {
   prepareNamedStars();
   rebuildSyntheticStars();
   rebuildNamedPresentation();
+  rebuildExoplanets();
+  rebuildGasLayer();
   rebuildDeepSky();
   applySizeScale();
+  applyZoom();
+  if (state.selectedStar) {
+    setSelectedStar(state.selectedStar);
+  }
+  hudSource.textContent = state.gaiaCatalog.length > 0
+    ? (state.exoplanetCatalog.length > 0 ? "Gaia + NASA" : "Gaia DR3")
+    : state.exoplanetCatalog.length > 0
+      ? "NASA Exoplanet"
+      : "Catalogue local";
   const totalStars = state.gaiaCatalog.length > 0
     ? state.syntheticStars.length + 1
     : state.syntheticStars.length + state.namedStars.length;
   hudStarCount.textContent = totalStars.toLocaleString("fr-FR");
+  setStatus(buildSceneStatus());
 }
 
 function prepareNamedStars() {
@@ -272,6 +326,90 @@ function rebuildNamedPresentation() {
 
   updatePersistentLabels(true);
   setSelectedStar(state.namedStars[0]);
+}
+
+function rebuildExoplanets() {
+  clearGroup(groups.exoplanets);
+  state.exoplanetObjects = [];
+  state.exoplanetCountsByStarId = new Map();
+  state.exoplanetCountsByName = new Map();
+
+  if (state.exoplanetCatalog.length === 0) {
+    groups.exoplanets.visible = exoplanetToggle.checked;
+    return;
+  }
+
+  const hostLookup = buildExoplanetHostLookup();
+
+  state.exoplanetCatalog.forEach((planet) => {
+    const hostStar = matchExoplanetHost(planet, hostLookup);
+    const hostPosition = hostStar
+      ? hostStar.position
+      : new THREE.Vector3(planet.x, planet.y, planet.z);
+    const orbitRadius = getExoplanetRenderOrbitRadius(planet);
+    const orbitBasis = createOrbitBasis(`${planet.hostName}:${planet.name}`);
+    const planetColor = equilibriumTemperatureToPlanetColor(planet.equilibriumTempK);
+    const orbitColor = planetColor.clone().lerp(new THREE.Color(0xffffff), 0.35);
+
+    if (hostStar?.sourceId) {
+      state.exoplanetCountsByStarId.set(
+        hostStar.sourceId,
+        (state.exoplanetCountsByStarId.get(hostStar.sourceId) ?? 0) + 1,
+      );
+    }
+    state.exoplanetCountsByName.set(
+      hostStar?.displayName ?? hostStar?.name ?? planet.hostName,
+      (state.exoplanetCountsByName.get(hostStar?.displayName ?? hostStar?.name ?? planet.hostName) ?? 0) + 1,
+    );
+
+    const orbitLine = createOrbitLine(orbitRadius, orbitColor);
+    orbitLine.position.copy(hostPosition);
+    orbitLine.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), orbitBasis.normal);
+    groups.exoplanets.add(orbitLine);
+
+    const planetSprite = new THREE.Sprite(
+      new THREE.SpriteMaterial({
+        map: glowSpriteTexture,
+        color: planetColor,
+        transparent: true,
+        opacity: 0.72,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+      }),
+    );
+    const spriteScale = getExoplanetRenderSize(planet);
+    planetSprite.scale.set(spriteScale, spriteScale, 1);
+    groups.exoplanets.add(planetSprite);
+
+    state.exoplanetObjects.push({
+      line: orbitLine,
+      sprite: planetSprite,
+      hostPosition,
+      hostStar,
+      radius: orbitRadius,
+      phase: hashToUnit(`${planet.name}:phase`) * Math.PI * 2,
+      angularSpeed: getExoplanetAngularSpeed(planet.orbitPeriodDays),
+      tangentA: orbitBasis.tangentA,
+      tangentB: orbitBasis.tangentB,
+      eccentricity: THREE.MathUtils.clamp(planet.orbitEccentricity ?? 0, 0, 0.45),
+    });
+  });
+
+  groups.exoplanets.visible = exoplanetToggle.checked;
+}
+
+function rebuildGasLayer() {
+  clearGroup(groups.gas);
+
+  const hotBubbleCloud = createLocalHotBubblePoints();
+  groups.gas.add(hotBubbleCloud);
+
+  if (state.gasDensityMap) {
+    const warmShellCloud = createWarmGasShellFromMap(state.gasDensityMap);
+    groups.gas.add(warmShellCloud);
+  }
+
+  groups.gas.visible = gasToggle.checked;
 }
 
 function rebuildDeepSky() {
@@ -539,19 +677,25 @@ function updateCamera(delta) {
   const forward = tmpA.set(0, 0, -1).applyQuaternion(state.ship.quaternion).normalize();
   const up = tmpB.set(0, 1, 0).applyQuaternion(state.ship.quaternion).normalize();
   const right = tmpC.set(1, 0, 0).applyQuaternion(state.ship.quaternion).normalize();
+  const zoomNormalized = getZoomNormalized();
+  const followDistance = THREE.MathUtils.lerp(12.5, 2.8, zoomNormalized);
+  const verticalOffset = THREE.MathUtils.lerp(4.8, 1.15, zoomNormalized);
+  const pointerOffset = THREE.MathUtils.lerp(1.15, 0.35, zoomNormalized);
+  const lookDistance = THREE.MathUtils.lerp(14, 5.5, zoomNormalized);
+  const lookVerticalOffset = THREE.MathUtils.lerp(1.9, 0.6, zoomNormalized);
 
   cameraTarget
     .copy(state.ship.position)
-    .addScaledVector(forward, -10.5)
-    .addScaledVector(up, 4.2)
-    .addScaledVector(right, pointer.x * 0.9);
+    .addScaledVector(forward, -followDistance)
+    .addScaledVector(up, verticalOffset)
+    .addScaledVector(right, pointer.x * pointerOffset);
 
   camera.position.lerp(cameraTarget, 1 - Math.exp(-delta * 3.8));
 
   lookTarget
     .copy(state.ship.position)
-    .addScaledVector(forward, 12)
-    .addScaledVector(up, pointer.y * 1.8);
+    .addScaledVector(forward, lookDistance)
+    .addScaledVector(up, pointer.y * lookVerticalOffset);
 
   camera.lookAt(lookTarget);
 }
@@ -562,6 +706,19 @@ function updateDeepSky(elapsed) {
       child.material.rotation = elapsed * child.userData.spin;
       child.position.y = child.userData.anchorY + Math.sin(elapsed * 0.25 + index) * 5;
     }
+  });
+}
+
+function updateExoplanets(elapsed) {
+  state.exoplanetObjects.forEach((planet) => {
+    const orbitalCompression = 1 - planet.eccentricity * 0.35;
+    const angle = planet.phase + elapsed * planet.angularSpeed;
+    const radialScale = 1 - planet.eccentricity * Math.cos(angle);
+
+    planet.sprite.position
+      .copy(planet.hostPosition)
+      .addScaledVector(planet.tangentA, Math.cos(angle) * planet.radius * radialScale)
+      .addScaledVector(planet.tangentB, Math.sin(angle) * planet.radius * orbitalCompression);
   });
 }
 
@@ -635,6 +792,21 @@ function handlePointerMove(event) {
   pointer.y = -((event.offsetY / sceneRoot.clientHeight) * 2 - 1);
 }
 
+function handleWheel(event) {
+  event.preventDefault();
+
+  const currentZoom = Number.parseFloat(zoomRange.value);
+  const nextZoom = THREE.MathUtils.clamp(
+    currentZoom + Math.sign(event.deltaY) * -0.16,
+    Number.parseFloat(zoomRange.min),
+    Number.parseFloat(zoomRange.max),
+  );
+
+  zoomRange.value = nextZoom.toFixed(1);
+  refreshZoomLabel();
+  applyZoom();
+}
+
 function onKeyDown(event) {
   if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Space"].includes(event.code)) {
     event.preventDefault();
@@ -668,6 +840,10 @@ function refreshSizeModeLabel() {
   sizeModeValue.textContent = getSizeModeProfile().label;
 }
 
+function refreshZoomLabel() {
+  zoomValue.textContent = `${Number.parseFloat(zoomRange.value).toFixed(1)}x`;
+}
+
 function applySizeScale() {
   const sliderScale = Number.parseFloat(sizeRange.value);
   const profile = getSizeModeProfile();
@@ -683,6 +859,12 @@ function applySizeScale() {
   }
 
   updatePersistentLabels(true);
+}
+
+function applyZoom() {
+  const fov = THREE.MathUtils.lerp(68, 22, getZoomNormalized());
+  camera.fov = fov;
+  camera.updateProjectionMatrix();
 }
 
 function setStatus(message) {
@@ -721,6 +903,39 @@ async function loadGaiaCatalog() {
   }
 }
 
+async function loadExoplanetCatalog() {
+  try {
+    const response = await fetch("./data/generated/exoplanets-nearby.json", {
+      cache: "no-store",
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    const payload = await response.json();
+    if (!Array.isArray(payload.planets) || payload.planets.length === 0) {
+      throw new Error("Empty exoplanet catalog");
+    }
+
+    state.exoplanetCatalog = payload.planets;
+    state.exoplanetMeta = payload.meta ?? null;
+  } catch (error) {
+    console.info("Exoplanet catalog not loaded.", error);
+    state.exoplanetCatalog = [];
+    state.exoplanetMeta = null;
+  }
+}
+
+async function loadGasDensityMap() {
+  try {
+    state.gasDensityMap = await readImageData("./data/assets/hi4pi-density.png");
+  } catch (error) {
+    console.info("HI4PI gas density map not loaded.", error);
+    state.gasDensityMap = null;
+  }
+}
+
 function setSelectedStar(star) {
   if (!star) {
     return;
@@ -753,7 +968,7 @@ function createSunAnchor() {
 
   const glow = new THREE.Sprite(
     new THREE.SpriteMaterial({
-      map: createGlowTexture(),
+      map: glowSpriteTexture,
       color: 0xffc96f,
       transparent: true,
       opacity: 0.45,
@@ -855,7 +1070,7 @@ function createBackgroundHalo() {
 
 function createNebulaSprites(random) {
   const shellRadius = 340;
-  const texture = createCloudTexture();
+  const texture = cloudSpriteTexture;
   const sprites = [];
 
   for (let index = 0; index < 6; index += 1) {
@@ -1005,6 +1220,11 @@ function formatSelectedStarMeta(star, distanceFromShipLy) {
     parts.push(`TYC ${star.tycId}`);
   } else if (star.designation && star.designation !== star.name) {
     parts.push(star.designation);
+  }
+
+  const exoplanetCount = getExoplanetCountForStar(star);
+  if (exoplanetCount > 0) {
+    parts.push(`${exoplanetCount} exoplanete${exoplanetCount > 1 ? "s" : ""}`);
   }
 
   return parts.join(" | ");
@@ -1295,6 +1515,402 @@ function updateSelectionLabel(star) {
 function setLabelSpriteScale(label, height) {
   const aspect = label.userData.aspect ?? 4;
   label.scale.set(height * aspect, height, 1);
+}
+
+function getZoomNormalized() {
+  const min = Number.parseFloat(zoomRange.min);
+  const max = Number.parseFloat(zoomRange.max);
+  const current = Number.parseFloat(zoomRange.value);
+  return THREE.MathUtils.clamp((current - min) / (max - min), 0, 1);
+}
+
+function getExoplanetCountForStar(star) {
+  if (!star) {
+    return 0;
+  }
+
+  if (star.sourceId && state.exoplanetCountsByStarId.has(star.sourceId)) {
+    return state.exoplanetCountsByStarId.get(star.sourceId);
+  }
+
+  return state.exoplanetCountsByName.get(star.displayName ?? star.name) ?? 0;
+}
+
+function buildSceneStatus() {
+  const parts = [];
+
+  if (state.gaiaCatalog.length > 0) {
+    parts.push(`${state.gaiaCatalog.length.toLocaleString("fr-FR")} etoiles Gaia`);
+  } else {
+    parts.push("champ stellaire local");
+  }
+
+  if (state.exoplanetCatalog.length > 0) {
+    parts.push(`${state.exoplanetCatalog.length.toLocaleString("fr-FR")} exoplanetes archivees`);
+  }
+
+  if (state.gasDensityMap) {
+    parts.push("gaz local hybride HI4PI + plasma chaud");
+  } else {
+    parts.push("plasma local stylise");
+  }
+
+  return `${parts.join(" | ")}.`;
+}
+
+function buildExoplanetHostLookup() {
+  const lookup = {
+    gaiaSourceId: new Map(),
+    hipId: new Map(),
+    stars: [],
+  };
+
+  const candidateStars = [...state.syntheticStars, ...state.namedStars];
+  const seenSourceIds = new Set();
+
+  candidateStars.forEach((star) => {
+    if (star.sourceId && seenSourceIds.has(star.sourceId)) {
+      return;
+    }
+
+    if (star.sourceId) {
+      seenSourceIds.add(star.sourceId);
+      lookup.gaiaSourceId.set(star.sourceId, star);
+    }
+    if (star.hipId) {
+      lookup.hipId.set(star.hipId, star);
+    }
+    lookup.stars.push(star);
+  });
+
+  return lookup;
+}
+
+function matchExoplanetHost(planet, hostLookup) {
+  if (planet.gaiaSourceId && hostLookup.gaiaSourceId.has(planet.gaiaSourceId)) {
+    return hostLookup.gaiaSourceId.get(planet.gaiaSourceId);
+  }
+
+  if (planet.hipId && hostLookup.hipId.has(planet.hipId)) {
+    return hostLookup.hipId.get(planet.hipId);
+  }
+
+  const hostPosition = new THREE.Vector3(planet.x, planet.y, planet.z);
+  let bestMatch = null;
+  let bestDistance = Infinity;
+
+  hostLookup.stars.forEach((star) => {
+    const distance = star.position.distanceTo(hostPosition);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      bestMatch = star;
+    }
+  });
+
+  return bestDistance <= 0.22 ? bestMatch : null;
+}
+
+function getExoplanetRenderOrbitRadius(planet) {
+  if (!Number.isFinite(planet.orbitSemiMajorAxisAu) || planet.orbitSemiMajorAxisAu <= 0) {
+    return EXOPLANET_ORBIT_MIN;
+  }
+
+  const realOrbitLy = planet.orbitSemiMajorAxisAu * AU_TO_LIGHTYEAR;
+  const scaledRadius = Math.pow(realOrbitLy / AU_TO_LIGHTYEAR, 0.35) * 0.95;
+  return THREE.MathUtils.clamp(scaledRadius, EXOPLANET_ORBIT_MIN, EXOPLANET_ORBIT_MAX);
+}
+
+function getExoplanetRenderSize(planet) {
+  if (!Number.isFinite(planet.radiusEarth) || planet.radiusEarth <= 0) {
+    return 0.22;
+  }
+
+  return THREE.MathUtils.clamp(Math.pow(planet.radiusEarth, 0.45) * 0.14, 0.16, 0.54);
+}
+
+function getExoplanetAngularSpeed(orbitPeriodDays) {
+  if (!Number.isFinite(orbitPeriodDays) || orbitPeriodDays <= 0) {
+    return Math.PI / 16;
+  }
+
+  const compressedPeriodSeconds = THREE.MathUtils.clamp(
+    5 + Math.log10(orbitPeriodDays + 1) * 10,
+    6,
+    34,
+  );
+  return (Math.PI * 2) / compressedPeriodSeconds;
+}
+
+function createOrbitBasis(seed) {
+  const phi = hashToUnit(`${seed}:phi`) * Math.PI * 2;
+  const cosTheta = THREE.MathUtils.lerp(-0.82, 0.82, hashToUnit(`${seed}:theta`));
+  const sinTheta = Math.sqrt(1 - cosTheta * cosTheta);
+  const normal = new THREE.Vector3(
+    Math.cos(phi) * sinTheta,
+    cosTheta,
+    Math.sin(phi) * sinTheta,
+  ).normalize();
+
+  const reference = Math.abs(normal.y) > 0.92
+    ? new THREE.Vector3(1, 0, 0)
+    : new THREE.Vector3(0, 1, 0);
+  const tangentA = new THREE.Vector3().crossVectors(normal, reference).normalize();
+  const tangentB = new THREE.Vector3().crossVectors(normal, tangentA).normalize();
+
+  return { normal, tangentA, tangentB };
+}
+
+function createOrbitLine(radius, color) {
+  const segments = 48;
+  const positions = [];
+
+  for (let index = 0; index <= segments; index += 1) {
+    const angle = (index / segments) * Math.PI * 2;
+    positions.push(Math.cos(angle) * radius, Math.sin(angle) * radius, 0);
+  }
+
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+
+  return new THREE.Line(
+    geometry,
+    new THREE.LineBasicMaterial({
+      color,
+      transparent: true,
+      opacity: 0.18,
+    }),
+  );
+}
+
+function createLocalHotBubblePoints() {
+  const random = mulberry32(241);
+  const positions = [];
+  const colors = [];
+  const sizes = [];
+  const texture = cloudSpriteTexture;
+  const hotColor = plasmaTemperatureToVisibleColor(HOT_PLASMA_TEMPERATURE_K);
+
+  for (let index = 0; index < 1800; index += 1) {
+    const direction = randomUnitVector(random);
+    const radius = THREE.MathUtils.lerp(16, 78, Math.pow(random(), 0.82));
+    const position = new THREE.Vector3(
+      direction.x * radius * 0.95,
+      direction.y * radius * 0.72,
+      direction.z * radius * 1.08,
+    );
+
+    positions.push(position.x, position.y, position.z);
+
+    const color = hotColor.clone().offsetHSL(0.01 - random() * 0.02, 0, random() * 0.08 - 0.03);
+    colors.push(color.r, color.g, color.b);
+    sizes.push(5 + random() * 11);
+  }
+
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
+  geometry.setAttribute("size", new THREE.Float32BufferAttribute(sizes, 1));
+
+  return new THREE.Points(
+    geometry,
+    new THREE.PointsMaterial({
+      map: texture,
+      size: 8.5,
+      sizeAttenuation: true,
+      transparent: true,
+      opacity: 0.18,
+      depthWrite: false,
+      vertexColors: true,
+      blending: THREE.AdditiveBlending,
+    }),
+  );
+}
+
+function createWarmGasShellFromMap(imageData) {
+  const positions = [];
+  const colors = [];
+  const sizes = [];
+  const texture = cloudSpriteTexture;
+  const warmColor = plasmaTemperatureToVisibleColor(WARM_PLASMA_TEMPERATURE_K);
+  const { data, width, height } = imageData;
+  const random = mulberry32(907);
+
+  for (let y = 0; y < height; y += 3) {
+    for (let x = 0; x < width; x += 3) {
+      const offset = (y * width + x) * 4;
+      const luminance = (
+        data[offset] * 0.2126
+        + data[offset + 1] * 0.7152
+        + data[offset + 2] * 0.0722
+      ) / 255;
+
+      if (luminance < 0.1 || random() > luminance * 0.62) {
+        continue;
+      }
+
+      const lon = (x / width) * Math.PI * 2 - Math.PI;
+      const lat = Math.PI / 2 - (y / height) * Math.PI;
+      const baseVector = galacticToEquatorialVector(lon, lat);
+      const radialJitter = THREE.MathUtils.lerp(52, 96, Math.pow(random(), 0.92));
+      const shellPosition = baseVector.multiplyScalar(radialJitter);
+
+      positions.push(shellPosition.x, shellPosition.y, shellPosition.z);
+
+      const color = warmColor.clone().lerp(
+        new THREE.Color(1, 0.72, 0.42),
+        THREE.MathUtils.clamp(Math.pow(luminance, 1.2) * 0.38, 0, 0.38),
+      );
+      colors.push(color.r, color.g, color.b);
+      sizes.push(4 + luminance * 12);
+    }
+  }
+
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
+  geometry.setAttribute("size", new THREE.Float32BufferAttribute(sizes, 1));
+
+  return new THREE.Points(
+    geometry,
+    new THREE.PointsMaterial({
+      map: texture,
+      size: 6.5,
+      sizeAttenuation: true,
+      transparent: true,
+      opacity: 0.22,
+      depthWrite: false,
+      vertexColors: true,
+      blending: THREE.AdditiveBlending,
+    }),
+  );
+}
+
+function readImageData(url) {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.crossOrigin = "anonymous";
+    image.onload = () => {
+      const canvas = document.createElement("canvas");
+      canvas.width = image.width;
+      canvas.height = image.height;
+      const context = canvas.getContext("2d");
+      context.drawImage(image, 0, 0);
+      resolve(context.getImageData(0, 0, image.width, image.height));
+    };
+    image.onerror = reject;
+    image.src = url;
+  });
+}
+
+function galacticToEquatorialVector(longitude, latitude) {
+  const galacticVector = new THREE.Vector3(
+    Math.cos(latitude) * Math.cos(longitude),
+    Math.cos(latitude) * Math.sin(longitude),
+    Math.sin(latitude),
+  );
+
+  const rotation = new THREE.Matrix3().set(
+    -0.0548755604, -0.8734370902, -0.4838350155,
+    0.4941094279, -0.44482963, 0.7469822445,
+    -0.867666149, -0.1980763734, 0.4559837762,
+  );
+
+  return galacticVector.applyMatrix3(rotation).normalize();
+}
+
+function plasmaTemperatureToVisibleColor(temperatureK) {
+  const peakNm = 2897771 / Math.max(temperatureK, 1);
+
+  if (peakNm < 90) {
+    return new THREE.Color(0.3, 0.82, 1);
+  }
+  if (peakNm < 200) {
+    return new THREE.Color(0.48, 0.62, 1);
+  }
+  if (peakNm < 380) {
+    return new THREE.Color(0.68, 0.5, 1);
+  }
+  if (peakNm <= 780) {
+    return wavelengthToColor(peakNm);
+  }
+  if (peakNm <= 1400) {
+    return new THREE.Color(1, 0.58, 0.28);
+  }
+
+  return new THREE.Color(1, 0.32, 0.18);
+}
+
+function wavelengthToColor(wavelengthNm) {
+  const wavelength = THREE.MathUtils.clamp(wavelengthNm, 380, 780);
+  let red = 0;
+  let green = 0;
+  let blue = 0;
+
+  if (wavelength < 440) {
+    red = -(wavelength - 440) / (440 - 380);
+    blue = 1;
+  } else if (wavelength < 490) {
+    green = (wavelength - 440) / (490 - 440);
+    blue = 1;
+  } else if (wavelength < 510) {
+    green = 1;
+    blue = -(wavelength - 510) / (510 - 490);
+  } else if (wavelength < 580) {
+    red = (wavelength - 510) / (580 - 510);
+    green = 1;
+  } else if (wavelength < 645) {
+    red = 1;
+    green = -(wavelength - 645) / (645 - 580);
+  } else {
+    red = 1;
+  }
+
+  let factor = 1;
+  if (wavelength < 420) {
+    factor = 0.3 + 0.7 * (wavelength - 380) / (420 - 380);
+  } else if (wavelength > 700) {
+    factor = 0.3 + 0.7 * (780 - wavelength) / (780 - 700);
+  }
+
+  return new THREE.Color(red * factor, green * factor, blue * factor);
+}
+
+function equilibriumTemperatureToPlanetColor(temperatureK) {
+  if (!Number.isFinite(temperatureK)) {
+    return new THREE.Color(0.72, 0.88, 1);
+  }
+  if (temperatureK < 220) {
+    return new THREE.Color(0.64, 0.84, 1);
+  }
+  if (temperatureK < 420) {
+    return new THREE.Color(0.8, 0.95, 1);
+  }
+  if (temperatureK < 800) {
+    return new THREE.Color(1, 0.8, 0.45);
+  }
+  return new THREE.Color(1, 0.56, 0.3);
+}
+
+function randomUnitVector(random) {
+  const z = random() * 2 - 1;
+  const theta = random() * Math.PI * 2;
+  const radial = Math.sqrt(1 - z * z);
+  return new THREE.Vector3(
+    radial * Math.cos(theta),
+    z,
+    radial * Math.sin(theta),
+  );
+}
+
+function hashToUnit(value) {
+  let hash = 2166136261;
+
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+
+  return ((hash >>> 0) % 1000000) / 1000000;
 }
 
 function mulberry32(seed) {

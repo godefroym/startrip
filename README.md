@@ -46,15 +46,34 @@ Dans l'interface :
 
 - la fiche de selection affiche maintenant une estimation de brillance visuelle depuis le vaisseau
 - un slider `Taille apparente des etoiles` permet d'agrandir ou compresser le rendu sans toucher aux donnees physiques
+- un slider `Zoom / echelle locale` permet de rapprocher la camera pour inspecter les systemes
 
 Workflow local :
 
 ```bash
 python scripts/fetch_gaia.py --radius-ly 100 --limit 20000
+python scripts/fetch_exoplanets.py --radius-ly 100 --limit 5000
 python -m http.server 8000
 ```
 
 Puis recharge [http://localhost:8000](http://localhost:8000).
+
+## Recuperer les exoplanetes
+
+Le repo inclut aussi un importeur `NASA Exoplanet Archive -> JSON`.
+
+Commande recommandee :
+
+```bash
+python scripts/fetch_exoplanets.py --radius-ly 100 --limit 5000
+```
+
+Le script ecrit :
+
+- `data/generated/exoplanets-nearby.json`
+- `data/generated/exoplanets-nearby.csv`
+
+Le front charge automatiquement le JSON s'il existe et raccorde les planetes a leurs etoiles hotes Gaia quand c'est possible.
 
 ## Contenu actuel
 
@@ -63,7 +82,9 @@ Puis recharge [http://localhost:8000](http://localhost:8000).
 - petit vaisseau pilotable
 - sphere + cube de frontiere pour la zone de simulation
 - catalogue local d'etoiles proches
-- labels pour les principales etoiles
+- labels d'etoiles proches autour du vaisseau
+- exoplanetes proches avec orbites compressees pour le rendu
+- couche gaz 3D locale
 - couche externe qui simule les futures cartes profondes
 
 ## Hypothese assumee dans ce MVP
@@ -73,7 +94,8 @@ Le catalogue d'etoiles nommees est un echantillon de demarrage et les etoiles de
 ## Suite logique
 
 - enrichir le bubble `Gaia` avec noms usuels et selections plus riches
-- raffiner encore les couleurs et rayons issus des champs Gaia
+- raffiner encore les orbites et selections exoplanetaires
+- remplacer la couche gaz hybride par un vrai volume 3D avec profondeur mesuree
 - projeter des tuiles `JWST` ou `ESO` sur une enveloppe du ciel lointain
 - streamer des volumes voisins quand le joueur atteint la limite
 

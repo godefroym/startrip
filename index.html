@@ -75,6 +75,14 @@
             </div>
           </div>
 
+          <div class="control-block">
+            <label for="zoomRange">Zoom / echelle locale</label>
+            <div class="range-row">
+              <input id="zoomRange" type="range" min="0.6" max="5.2" step="0.1" value="1.0" />
+              <strong id="zoomValue">1.0x</strong>
+            </div>
+          </div>
+
           <div class="toggle-list">
             <label class="toggle-row">
               <input id="boundaryToggle" type="checkbox" checked />
@@ -83,6 +91,14 @@
             <label class="toggle-row">
               <input id="shellToggle" type="checkbox" checked />
               <span>Afficher le ciel lointain</span>
+            </label>
+            <label class="toggle-row">
+              <input id="gasToggle" type="checkbox" checked />
+              <span>Afficher le gaz 3D</span>
+            </label>
+            <label class="toggle-row">
+              <input id="exoplanetToggle" type="checkbox" checked />
+              <span>Afficher les exoplanetes</span>
             </label>
             <label class="toggle-row">
               <input id="labelsToggle" type="checkbox" checked />
@@ -104,6 +120,7 @@
             <li><kbd>↑</kbd> / <kbd>↓</kbd> tangage</li>
             <li><kbd>Q</kbd> / <kbd>E</kbd> roulis</li>
             <li><kbd>Shift</kbd> boost</li>
+            <li><kbd>Molette</kbd> ajuste le zoom</li>
             <li><kbd>R</kbd> reset rapide</li>
           </ul>
         </section>
