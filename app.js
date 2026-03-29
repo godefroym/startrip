@@ -15,6 +15,7 @@ const labelsToggle = document.querySelector("#labelsToggle");
 const resetShipButton = document.querySelector("#resetShip");
 const sunViewButton = document.querySelector("#sunView");
 const hudStarCount = document.querySelector("#hudStarCount");
+const hudSource = document.querySelector("#hudSource");
 const hudSpeed = document.querySelector("#hudSpeed");
 const hudPosition = document.querySelector("#hudPosition");
 const hudDistance = document.querySelector("#hudDistance");
@@ -82,19 +83,14 @@ const state = {
   namedPoints: null,
   selectedStar: null,
   deepSkyPoints: null,
+  gaiaCatalog: [],
+  gaiaMeta: null,
 };
 
 const starMaterial = createStarMaterial();
 
 createShip();
 buildBoundary();
-rebuildSimulation();
-resetShip(true);
-refreshDensityLabel();
-setStatus(
-  "Bubble local initialise. Le volume proche est en 3D et la couche externe simule les cartes de fond qui viendront plus tard de JWST ou de l'ESO.",
-);
-
 renderer.domElement.addEventListener("pointermove", handlePointerMove);
 window.addEventListener("resize", onResize);
 window.addEventListener("keydown", onKeyDown);
@@ -128,7 +124,15 @@ sunViewButton.addEventListener("click", () => {
   setStatus("Vue rapprochee autour du Soleil.");
 });
 
-animate();
+init();
+
+async function init() {
+  refreshDensityLabel();
+  await loadGaiaCatalog();
+  rebuildSimulation();
+  resetShip(true);
+  animate();
+}
 
 function animate() {
   requestAnimationFrame(animate);
@@ -159,16 +163,18 @@ function rebuildSyntheticStars() {
   clearGroup(groups.synthetic);
 
   const density = Number.parseInt(densityRange.value, 10);
-  const syntheticCatalog = createSyntheticPopulation(
-    density,
-    LOCAL_BUBBLE_RADIUS_LY,
-    19,
-  )
-    .map(enrichStar)
-    .filter((star) => star.distanceLy > 2.5);
+  const sourceCatalog = state.gaiaCatalog.length > 0
+    ? state.gaiaCatalog.map(enrichStar)
+    : createSyntheticPopulation(
+        density,
+        LOCAL_BUBBLE_RADIUS_LY,
+        19,
+      )
+        .map(enrichStar)
+        .filter((star) => star.distanceLy > 2.5);
 
-  state.syntheticStars = syntheticCatalog;
-  state.syntheticPoints = createPointCloud(syntheticCatalog, {
+  state.syntheticStars = sourceCatalog;
+  state.syntheticPoints = createPointCloud(sourceCatalog, {
     sizeMultiplier: 0.6,
     alphaScale: 0.76,
   });
@@ -268,9 +274,11 @@ function createPointCloud(stars, options) {
 }
 
 function enrichStar(star) {
-  const positionSource = star.distanceLy === 0
-    ? { x: 0, y: 0, z: 0 }
-    : sphericalToCartesian(star.distanceLy, star.raDeg, star.decDeg);
+  const positionSource = Number.isFinite(star.x) && Number.isFinite(star.y) && Number.isFinite(star.z)
+    ? { x: star.x, y: star.y, z: star.z }
+    : star.distanceLy === 0
+      ? { x: 0, y: 0, z: 0 }
+      : sphericalToCartesian(star.distanceLy, star.raDeg, star.decDeg);
   const color = temperatureToColor(star.temperatureK);
   const renderSize = THREE.MathUtils.clamp(
     Math.pow(star.radiusSolar, 0.42) * (star.synthetic ? 2.2 : 4.6),
@@ -552,6 +560,38 @@ function refreshDensityLabel() {
 
 function setStatus(message) {
   statusText.textContent = message;
+}
+
+async function loadGaiaCatalog() {
+  try {
+    const response = await fetch("./data/generated/gaia-nearby-stars.json", {
+      cache: "no-store",
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    const payload = await response.json();
+    if (!Array.isArray(payload.stars) || payload.stars.length === 0) {
+      throw new Error("Empty Gaia catalog");
+    }
+
+    state.gaiaCatalog = payload.stars;
+    state.gaiaMeta = payload.meta ?? null;
+    hudSource.textContent = "Gaia DR3";
+    setStatus(
+      `${payload.stars.length.toLocaleString("fr-FR")} etoiles Gaia chargees pour la zone locale. Le bubble est maintenant pilote par de vraies donnees.`,
+    );
+  } catch (error) {
+    console.info("Gaia catalog not loaded, fallback to synthetic field.", error);
+    state.gaiaCatalog = [];
+    state.gaiaMeta = null;
+    hudSource.textContent = "Catalogue local";
+    setStatus(
+      "Bubble local initialise. Lance le script Gaia pour remplacer le fond synthetique par de vraies etoiles proches.",
+    );
+  }
 }
 
 function setSelectedStar(star) {

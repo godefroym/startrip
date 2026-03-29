@@ -18,6 +18,32 @@ python -m http.server 8000
 
 Puis ouvre [http://localhost:8000](http://localhost:8000).
 
+## Recuperer de vraies etoiles Gaia
+
+Le repo inclut maintenant un importeur automatique `Gaia DR3 -> JSON`.
+
+Commande recommandee :
+
+```bash
+python scripts/fetch_gaia.py --radius-ly 100 --limit 20000
+```
+
+Le script ecrit :
+
+- `data/generated/gaia-nearby-stars.json`
+- `data/generated/gaia-nearby-stars.csv`
+
+Le front charge automatiquement `data/generated/gaia-nearby-stars.json` s'il existe. Sinon, il retombe sur le champ synthetique.
+
+Workflow local :
+
+```bash
+python scripts/fetch_gaia.py --radius-ly 100 --limit 20000
+python -m http.server 8000
+```
+
+Puis recharge [http://localhost:8000](http://localhost:8000).
+
 ## Contenu actuel
 
 - interface statique sans build
@@ -34,7 +60,7 @@ Le catalogue d'etoiles nommees est un echantillon de demarrage et les etoiles de
 
 ## Suite logique
 
-- remplacer le fond synthetique par un export `Gaia` reel dans un rayon de `100 a.l.`
+- enrichir le bubble `Gaia` avec noms usuels et selections plus riches
 - estimer couleurs, rayons et classes depuis les champs photometriques
 - projeter des tuiles `JWST` ou `ESO` sur une enveloppe du ciel lointain
 - streamer des volumes voisins quand le joueur atteint la limite

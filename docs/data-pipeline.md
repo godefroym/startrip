@@ -50,6 +50,23 @@ Ou :
 5. Construire une sphere lointaine avec des textures ou tuiles `JWST`/`ESO`.
 6. Utiliser le navigateur uniquement pour le rendu et l'interaction.
 
+## Script inclus dans ce repo
+
+Le repo contient maintenant [scripts/fetch_gaia.py](/C:/Users/godef/OneDrive/Documents/startrip/scripts/fetch_gaia.py).
+
+Exemple :
+
+```bash
+python scripts/fetch_gaia.py --radius-ly 100 --limit 20000
+```
+
+Sorties :
+
+- `data/generated/gaia-nearby-stars.json`
+- `data/generated/gaia-nearby-stars.csv`
+
+Le front tente de charger automatiquement le JSON genere.
+
 ## Esquisse de requete Gaia
 
 La requete exacte sera a ajuster selon la release cible, mais l'idee est :
