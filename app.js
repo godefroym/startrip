@@ -123,6 +123,7 @@ const state = {
   gaiaCatalog: [],
   gaiaMeta: null,
   labelStars: [],
+  labelSignature: "",
   sunAnchor: null,
   selectionLabel: null,
 };
@@ -160,6 +161,7 @@ shellToggle.addEventListener("change", () => {
 });
 
 labelsToggle.addEventListener("change", () => {
+  updatePersistentLabels(true);
   groups.labels.visible = labelsToggle.checked;
   groups.selection.visible = labelsToggle.checked;
   groups.named.visible = true;
@@ -196,6 +198,7 @@ function animate() {
 
   starMaterial.uniforms.uTime.value = elapsed;
   updateShip(delta);
+  updatePersistentLabels();
   updateCamera(delta);
   updateDeepSky(elapsed);
   updateSelection();
@@ -250,6 +253,7 @@ function rebuildNamedPresentation() {
   clearGroup(groups.labels);
   clearGroup(groups.selection);
   state.labelStars = [];
+  state.labelSignature = "";
   state.selectionLabel = null;
 
   state.sunAnchor = createSunAnchor();
@@ -266,16 +270,7 @@ function rebuildNamedPresentation() {
     state.namedPoints = null;
   }
 
-  state.labelStars = buildPersistentLabelStars();
-  state.labelStars.forEach((star) => {
-    const label = createLabelSprite(getPersistentLabelText(star));
-    label.position.copy(star.position).add(new THREE.Vector3(0, getPersistentLabelOffset(star), 0));
-    setLabelSpriteScale(label, 2.1);
-    groups.labels.add(label);
-  });
-
-  groups.labels.visible = labelsToggle.checked;
-  groups.selection.visible = labelsToggle.checked;
+  updatePersistentLabels(true);
   setSelectedStar(state.namedStars[0]);
 }
 
@@ -495,7 +490,8 @@ function updateShip(delta) {
     return;
   }
 
-  const yawInput = Number(keys.has("KeyA")) - Number(keys.has("KeyD"));
+  const yawInput = Number(keys.has("ArrowLeft") || keys.has("KeyA"))
+    - Number(keys.has("ArrowRight") || keys.has("KeyD"));
   const pitchInput = Number(keys.has("ArrowUp")) - Number(keys.has("ArrowDown"));
   const rollInput = Number(keys.has("KeyQ")) - Number(keys.has("KeyE"));
   const thrustInput = Number(keys.has("KeyW")) - Number(keys.has("KeyS"));
@@ -640,7 +636,7 @@ function handlePointerMove(event) {
 }
 
 function onKeyDown(event) {
-  if (["ArrowUp", "ArrowDown", "Space"].includes(event.code)) {
+  if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Space"].includes(event.code)) {
     event.preventDefault();
   }
 
@@ -686,7 +682,7 @@ function applySizeScale() {
       state.sunAnchor.userData.baseLightIntensity * profile.sunLightScale;
   }
 
-  updateSelectionLabel(state.selectedStar);
+  updatePersistentLabels(true);
 }
 
 function setStatus(message) {
@@ -1204,23 +1200,30 @@ function getPersistentLabelOffset(star) {
   return getSelectionLabelOffset(star) + (star.name === "Soleil" ? 0.9 : 0.4);
 }
 
-function shouldCreatePersistentLabel(star) {
+function shouldCreatePersistentLabel(star, centerPosition = state.ship?.position) {
   return Boolean(
     star
-    && star.distanceLy <= PERSISTENT_LABEL_RADIUS_LY
+    && centerPosition
+    && centerPosition.distanceTo(star.position) <= PERSISTENT_LABEL_RADIUS_LY
     && getPersistentLabelText(star),
   );
 }
 
-function buildPersistentLabelStars() {
-  const nearbyNamedStars = state.namedStars.filter(shouldCreatePersistentLabel);
+function buildPersistentLabelStars(centerPosition = state.ship?.position) {
+  const nearbyNamedStars = state.namedStars.filter((star) => (
+    shouldCreatePersistentLabel(star, centerPosition)
+  ));
 
   if (state.gaiaCatalog.length === 0) {
-    const nearbySyntheticStars = state.syntheticStars.filter(shouldCreatePersistentLabel);
+    const nearbySyntheticStars = state.syntheticStars.filter((star) => (
+      shouldCreatePersistentLabel(star, centerPosition)
+    ));
     return [...nearbyNamedStars, ...nearbySyntheticStars];
   }
 
-  const nearbyGaiaStars = state.syntheticStars.filter(shouldCreatePersistentLabel);
+  const nearbyGaiaStars = state.syntheticStars.filter((star) => (
+    shouldCreatePersistentLabel(star, centerPosition)
+  ));
   const occupiedLabels = new Set(
     nearbyGaiaStars.map((star) => getPersistentLabelText(star)),
   );
@@ -1229,6 +1232,44 @@ function buildPersistentLabelStars() {
   );
 
   return [...nearbyGaiaStars, ...unmatchedNamedStars];
+}
+
+function getPersistentLabelSignature(stars) {
+  return stars
+    .map((star) => `${star.sourceId ?? star.name}:${getPersistentLabelText(star)}`)
+    .join("|");
+}
+
+function updatePersistentLabels(force = false) {
+  const centerPosition = state.ship?.position;
+  if (!centerPosition) {
+    return;
+  }
+
+  const nextLabelStars = buildPersistentLabelStars(centerPosition);
+  const nextSignature = getPersistentLabelSignature(nextLabelStars);
+
+  state.labelStars = nextLabelStars;
+
+  if (!force && nextSignature === state.labelSignature) {
+    groups.labels.visible = labelsToggle.checked;
+    groups.selection.visible = labelsToggle.checked;
+    return;
+  }
+
+  state.labelSignature = nextSignature;
+  clearGroup(groups.labels);
+
+  nextLabelStars.forEach((star) => {
+    const label = createLabelSprite(getPersistentLabelText(star));
+    label.position.copy(star.position).add(new THREE.Vector3(0, getPersistentLabelOffset(star), 0));
+    setLabelSpriteScale(label, 2.1);
+    groups.labels.add(label);
+  });
+
+  groups.labels.visible = labelsToggle.checked;
+  groups.selection.visible = labelsToggle.checked;
+  updateSelectionLabel(state.selectedStar);
 }
 
 function updateSelectionLabel(star) {
