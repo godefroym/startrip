@@ -59,6 +59,7 @@ const tmpB = new THREE.Vector3();
 const tmpC = new THREE.Vector3();
 const cameraTarget = new THREE.Vector3();
 const lookTarget = new THREE.Vector3();
+const PERSISTENT_LABEL_RADIUS_LY = 10;
 
 const SIZE_MODE_PROFILES = {
   realistic: {
@@ -160,6 +161,7 @@ shellToggle.addEventListener("change", () => {
 
 labelsToggle.addEventListener("change", () => {
   groups.labels.visible = labelsToggle.checked;
+  groups.selection.visible = labelsToggle.checked;
   groups.named.visible = true;
 });
 
@@ -260,27 +262,20 @@ function rebuildNamedPresentation() {
     });
     state.namedPoints.userData.starPool = state.namedStars;
     groups.named.add(state.namedPoints);
-    state.labelStars = state.namedStars.filter((star) => star.name !== "Soleil");
   } else {
     state.namedPoints = null;
-    const labeledGaiaStars = state.syntheticStars.filter((star) => star.tagName);
-    const labeledNames = new Set(
-      labeledGaiaStars.map((star) => star.tagName ?? star.displayName ?? star.name),
-    );
-    const unmatchedNamedStars = state.namedStars.filter(
-      (star) => star.name !== "Soleil" && !labeledNames.has(star.name),
-    );
-    state.labelStars = [...labeledGaiaStars, ...unmatchedNamedStars];
   }
 
+  state.labelStars = buildPersistentLabelStars();
   state.labelStars.forEach((star) => {
-    const label = createLabelSprite(star.tagName ?? star.displayName ?? star.name);
-    label.position.copy(star.position).add(new THREE.Vector3(0, 1.4, 0));
+    const label = createLabelSprite(getPersistentLabelText(star));
+    label.position.copy(star.position).add(new THREE.Vector3(0, getPersistentLabelOffset(star), 0));
     setLabelSpriteScale(label, 2.1);
     groups.labels.add(label);
   });
 
   groups.labels.visible = labelsToggle.checked;
+  groups.selection.visible = labelsToggle.checked;
   setSelectedStar(state.namedStars[0]);
 }
 
@@ -1164,6 +1159,14 @@ function getStarDisplayName(star) {
   return star.displayName ?? getCatalogLabel(star);
 }
 
+function getPersistentLabelText(star) {
+  if (!star) {
+    return null;
+  }
+
+  return star.tagName ?? getStarDisplayName(star);
+}
+
 function getStarTagText(star) {
   if (!star) {
     return null;
@@ -1197,9 +1200,44 @@ function getSelectionLabelOffset(star) {
   return THREE.MathUtils.clamp((star.renderSize ?? 3) * 0.4, 1.5, 4);
 }
 
+function getPersistentLabelOffset(star) {
+  return getSelectionLabelOffset(star) + (star.name === "Soleil" ? 0.9 : 0.4);
+}
+
+function shouldCreatePersistentLabel(star) {
+  return Boolean(
+    star
+    && star.distanceLy <= PERSISTENT_LABEL_RADIUS_LY
+    && getPersistentLabelText(star),
+  );
+}
+
+function buildPersistentLabelStars() {
+  const nearbyNamedStars = state.namedStars.filter(shouldCreatePersistentLabel);
+
+  if (state.gaiaCatalog.length === 0) {
+    const nearbySyntheticStars = state.syntheticStars.filter(shouldCreatePersistentLabel);
+    return [...nearbyNamedStars, ...nearbySyntheticStars];
+  }
+
+  const nearbyGaiaStars = state.syntheticStars.filter(shouldCreatePersistentLabel);
+  const occupiedLabels = new Set(
+    nearbyGaiaStars.map((star) => getPersistentLabelText(star)),
+  );
+  const unmatchedNamedStars = nearbyNamedStars.filter(
+    (star) => !occupiedLabels.has(getPersistentLabelText(star)),
+  );
+
+  return [...nearbyGaiaStars, ...unmatchedNamedStars];
+}
+
 function updateSelectionLabel(star) {
   clearGroup(groups.selection);
   state.selectionLabel = null;
+
+  if (!labelsToggle.checked || shouldCreatePersistentLabel(star)) {
+    return;
+  }
 
   const text = getStarTagText(star);
   if (!text) {
