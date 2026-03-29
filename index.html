@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Startrip</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=Space+Grotesk:wght@500;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="page-shell">
+      <aside class="sidebar">
+        <section class="panel hero-panel">
+          <p class="eyebrow">Exploration locale</p>
+          <h1>Startrip</h1>
+          <p class="lede">
+            Prototype d'un espace 3D autour du Soleil, limite a 100 annees-lumiere,
+            combine avec un ciel lointain simule en attendant les vraies couches
+            Gaia + JWST/ESO.
+          </p>
+        </section>
+
+        <section class="panel">
+          <div class="metric-grid">
+            <article class="metric-card">
+              <span>Volume</span>
+              <strong>100 a.l.</strong>
+            </article>
+            <article class="metric-card">
+              <span>Etoiles</span>
+              <strong id="hudStarCount">0</strong>
+            </article>
+            <article class="metric-card">
+              <span>Vitesse</span>
+              <strong id="hudSpeed">0.0 u/s</strong>
+            </article>
+            <article class="metric-card">
+              <span>Source</span>
+              <strong>Catalogue local</strong>
+            </article>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="control-block">
+            <label for="densityRange">Densite du fond stellaire</label>
+            <div class="range-row">
+              <input id="densityRange" type="range" min="250" max="2200" step="50" value="1100" />
+              <strong id="densityValue"></strong>
+            </div>
+          </div>
+
+          <div class="toggle-list">
+            <label class="toggle-row">
+              <input id="boundaryToggle" type="checkbox" checked />
+              <span>Afficher la frontiere des 100 a.l.</span>
+            </label>
+            <label class="toggle-row">
+              <input id="shellToggle" type="checkbox" checked />
+              <span>Afficher le ciel lointain</span>
+            </label>
+            <label class="toggle-row">
+              <input id="labelsToggle" type="checkbox" checked />
+              <span>Afficher les etoiles nommees</span>
+            </label>
+          </div>
+
+          <div class="button-row">
+            <button id="resetShip" type="button">Recentrer le vaisseau</button>
+            <button id="sunView" class="ghost" type="button">Vue Soleil</button>
+          </div>
+        </section>
+
+        <section class="panel compact">
+          <h2>Pilotage</h2>
+          <ul class="flat-list">
+            <li><kbd>W</kbd> / <kbd>S</kbd> avance ou freine</li>
+            <li><kbd>A</kbd> / <kbd>D</kbd> rotation gauche ou droite</li>
+            <li><kbd>↑</kbd> / <kbd>↓</kbd> tangage</li>
+            <li><kbd>Q</kbd> / <kbd>E</kbd> roulis</li>
+            <li><kbd>Shift</kbd> boost</li>
+            <li><kbd>R</kbd> reset rapide</li>
+          </ul>
+        </section>
+
+        <section class="panel compact">
+          <h2>Selection</h2>
+          <div class="selection-card">
+            <p id="selectedName">Soleil</p>
+            <p id="selectedMeta">
+              Centre du volume local. Le reste du bubble sera remplace plus tard
+              par un export Gaia reel.
+            </p>
+          </div>
+        </section>
+      </aside>
+
+      <main class="viewport-panel">
+        <div id="sceneRoot" class="scene-root"></div>
+
+        <div class="hud-left">
+          <div class="hud-pill">
+            <span>Position</span>
+            <strong id="hudPosition">0.0, 0.0, 0.0</strong>
+          </div>
+          <div class="hud-pill">
+            <span>Distance au Soleil</span>
+            <strong id="hudDistance">0.0 a.l.</strong>
+          </div>
+        </div>
+
+        <div class="hud-bottom">
+          <p class="status-title">Etat de la simulation</p>
+          <p id="statusText">
+            Bubble local initialise. Les etoiles proches sont structurees en 3D
+            et le ciel lointain joue le role de couche visuelle de fond.
+          </p>
+        </div>
+      </main>
+    </div>
+
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>
