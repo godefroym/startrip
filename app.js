@@ -85,6 +85,7 @@ const state = {
   deepSkyPoints: null,
   gaiaCatalog: [],
   gaiaMeta: null,
+  labelStars: [],
 };
 
 const starMaterial = createStarMaterial();
@@ -151,12 +152,18 @@ function animate() {
 }
 
 function rebuildSimulation() {
+  prepareNamedStars();
   rebuildSyntheticStars();
-  rebuildNamedStars();
+  rebuildNamedPresentation();
   rebuildDeepSky();
-  hudStarCount.textContent = (
-    state.syntheticStars.length + state.namedStars.length
-  ).toLocaleString("fr-FR");
+  const totalStars = state.gaiaCatalog.length > 0
+    ? state.syntheticStars.length + 1
+    : state.syntheticStars.length + state.namedStars.length;
+  hudStarCount.textContent = totalStars.toLocaleString("fr-FR");
+}
+
+function prepareNamedStars() {
+  state.namedStars = NAMED_STARS.map(enrichStar);
 }
 
 function rebuildSyntheticStars() {
@@ -164,7 +171,9 @@ function rebuildSyntheticStars() {
 
   const density = Number.parseInt(densityRange.value, 10);
   const sourceCatalog = state.gaiaCatalog.length > 0
-    ? state.gaiaCatalog.map(enrichStar)
+    ? state.gaiaCatalog
+        .map(applyKnownNameToGaiaStar)
+        .map(enrichStar)
     : createSyntheticPopulation(
         density,
         LOCAL_BUBBLE_RADIUS_LY,
@@ -182,28 +191,37 @@ function rebuildSyntheticStars() {
   groups.synthetic.add(state.syntheticPoints);
 }
 
-function rebuildNamedStars() {
+function rebuildNamedPresentation() {
   clearGroup(groups.named);
   clearGroup(groups.labels);
+  state.labelStars = [];
 
-  state.namedStars = NAMED_STARS.map(enrichStar);
   groups.named.add(createSunAnchor());
-  state.namedPoints = createPointCloud(state.namedStars, {
-    sizeMultiplier: 1.4,
-    alphaScale: 1,
-  });
 
-  state.namedPoints.userData.starPool = state.namedStars;
-  groups.named.add(state.namedPoints);
-
-  state.namedStars
-    .filter((star) => star.name !== "Soleil")
-    .forEach((star) => {
-      const label = createLabelSprite(star.name);
-      label.position.copy(star.position).add(new THREE.Vector3(0, 1.4, 0));
-      label.scale.set(8, 2.1, 1);
-      groups.labels.add(label);
+  if (state.gaiaCatalog.length === 0) {
+    state.namedPoints = createPointCloud(state.namedStars, {
+      sizeMultiplier: 1.4,
+      alphaScale: 1,
     });
+    state.namedPoints.userData.starPool = state.namedStars;
+    groups.named.add(state.namedPoints);
+    state.labelStars = state.namedStars.filter((star) => star.name !== "Soleil");
+  } else {
+    state.namedPoints = null;
+    const labeledGaiaStars = state.syntheticStars.filter((star) => star.displayName);
+    const labeledNames = new Set(labeledGaiaStars.map((star) => star.displayName));
+    const unmatchedNamedStars = state.namedStars.filter(
+      (star) => star.name !== "Soleil" && !labeledNames.has(star.name),
+    );
+    state.labelStars = [...labeledGaiaStars, ...unmatchedNamedStars];
+  }
+
+  state.labelStars.forEach((star) => {
+    const label = createLabelSprite(star.displayName ?? star.name);
+    label.position.copy(star.position).add(new THREE.Vector3(0, 1.4, 0));
+    label.scale.set(8, 2.1, 1);
+    groups.labels.add(label);
+  });
 
   groups.labels.visible = labelsToggle.checked;
   setSelectedStar(state.namedStars[0]);
@@ -476,25 +494,35 @@ function updateDeepSky(elapsed) {
 }
 
 function updateSelection() {
-  if (!state.namedPoints) {
-    return;
-  }
-
   raycaster.setFromCamera(pointer, camera);
-  const [hit] = raycaster.intersectObject(state.namedPoints);
+  const [gaiaHit] = state.syntheticPoints
+    ? raycaster.intersectObject(state.syntheticPoints)
+    : [];
 
-  if (hit) {
-    const hovered = state.namedStars[hit.index];
+  if (gaiaHit) {
+    const hovered = state.syntheticStars[gaiaHit.index];
     if (hovered) {
       setSelectedStar(hovered);
       return;
     }
   }
 
+  if (state.namedPoints) {
+    const [namedHit] = raycaster.intersectObject(state.namedPoints);
+    if (namedHit) {
+      const hovered = state.namedStars[namedHit.index];
+      if (hovered) {
+        setSelectedStar(hovered);
+        return;
+      }
+    }
+  }
+
   let closestStar = null;
   let closestDistance = Infinity;
 
-  state.namedStars.forEach((star) => {
+  const proximityPool = state.labelStars.length > 0 ? state.labelStars : state.namedStars;
+  proximityPool.forEach((star) => {
     const distance = state.ship.position.distanceTo(star.position);
     if (distance < closestDistance) {
       closestDistance = distance;
@@ -602,7 +630,7 @@ function setSelectedStar(star) {
   }
 
   state.selectedStar = star;
-  selectedName.textContent = star.name;
+  selectedName.textContent = star.displayName ?? star.name;
   selectedName.style.color = star.colorHex ?? "#f5f8ff";
 
   const distanceFromShip = state.ship
@@ -840,11 +868,53 @@ function formatSelectedStarMeta(star, distanceFromShip) {
     parts.push("couleur estimee");
   }
 
+  if (star.displayName && star.name && star.displayName !== star.name) {
+    parts.push(star.name);
+  }
+
   return parts.join(" | ");
 }
 
 function rgbToThreeColor(rgb) {
   return new THREE.Color(rgb.r / 255, rgb.g / 255, rgb.b / 255);
+}
+
+function applyKnownNameToGaiaStar(star) {
+  const match = findKnownNamedStarFor(star);
+  if (!match || match.name === "Soleil") {
+    return star;
+  }
+
+  return {
+    ...star,
+    displayName: match.name,
+  };
+}
+
+function findKnownNamedStarFor(star, maxDistanceLy = 0.75) {
+  const cartesian = star.distanceLy === 0
+    ? { x: 0, y: 0, z: 0 }
+    : sphericalToCartesian(star.distanceLy, star.raDeg, star.decDeg);
+  const position = Number.isFinite(star.x) && Number.isFinite(star.y) && Number.isFinite(star.z)
+    ? new THREE.Vector3(star.x, star.y, star.z)
+    : new THREE.Vector3(cartesian.x, cartesian.y, cartesian.z);
+
+  let bestMatch = null;
+  let bestDistance = Infinity;
+
+  state.namedStars.forEach((namedStar) => {
+    if (namedStar.name === "Soleil") {
+      return;
+    }
+
+    const distance = namedStar.position.distanceTo(position);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      bestMatch = namedStar;
+    }
+  });
+
+  return bestDistance <= maxDistanceLy ? bestMatch : null;
 }
 
 function temperatureToColor(temperature) {
