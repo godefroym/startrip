@@ -244,6 +244,18 @@ def row_to_star(row: dict[str, str]) -> dict[str, object]:
     x, y, z = spherical_to_cartesian(distance_ly, ra_deg, dec_deg)
     color_rgb = color_temperature_to_rgb(temperature_k)
     color_hex = rgb_to_hex(color_rgb)
+    luminosity_for_render = (
+        lum_solar if lum_solar is not None
+        else estimate_luminosity_from_radius_and_temperature(radius_solar, temperature_k)
+    )
+    apparent_magnitude_g = parse_float(row.get("phot_g_mean_mag"))
+    if apparent_magnitude_g is not None:
+        brightness_source = "phot_g_mean_mag"
+    else:
+        apparent_magnitude_g = estimate_apparent_magnitude(distance_ly, luminosity_for_render)
+        brightness_source = "luminosity_temperature_estimate"
+    absolute_magnitude_g = estimate_absolute_magnitude(luminosity_for_render)
+    visual_brightness = apparent_magnitude_to_visual_brightness(apparent_magnitude_g)
 
     return {
         "id": row["source_id"],
@@ -265,6 +277,10 @@ def row_to_star(row: dict[str, str]) -> dict[str, object]:
         "colorRgb": color_rgb,
         "colorHex": color_hex,
         "colorSource": color_source,
+        "apparentMagnitudeG": round(apparent_magnitude_g, 6),
+        "absoluteMagnitudeG": round(absolute_magnitude_g, 6),
+        "visualBrightness": round(visual_brightness, 6),
+        "brightnessSource": brightness_source,
         "bpRp": bp_rp,
         "photGMeanMag": parse_float(row.get("phot_g_mean_mag")),
         "photBpMeanMag": parse_float(row.get("phot_bp_mean_mag")),
@@ -339,6 +355,26 @@ def default_radius_for_temperature(temperature_k: float) -> float:
     if temperature_k >= 3700:
         return 0.75
     return 0.35
+
+
+def estimate_luminosity_from_radius_and_temperature(radius_solar: float, temperature_k: float) -> float:
+    return max(
+        0.000001,
+        (radius_solar ** 2) * ((temperature_k / SUN_TEMPERATURE_K) ** 4),
+    )
+
+
+def estimate_absolute_magnitude(luminosity_solar: float) -> float:
+    return SUN_ABSOLUTE_MAGNITUDE - 2.5 * math.log10(max(luminosity_solar, 0.000001))
+
+
+def estimate_apparent_magnitude(distance_ly: float, luminosity_solar: float) -> float:
+    distance_pc = max(distance_ly / PARSEC_TO_LIGHTYEAR, 0.000001)
+    return estimate_absolute_magnitude(luminosity_solar) + 5.0 * (math.log10(distance_pc) - 1.0)
+
+
+def apparent_magnitude_to_visual_brightness(apparent_magnitude: float) -> float:
+    return max(0.08, min(1.0, 0.12 + math.exp(-0.23 * (apparent_magnitude + 1.5))))
 
 
 def spectral_type_from_temperature(temperature_k: float) -> str:

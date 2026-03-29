@@ -40,6 +40,12 @@ Le JSON Gaia expose aussi des champs de rendu deja prets :
 - `radiusSolar` et `radiusSource`
 - `temperatureK` et `temperatureSource`
 - `colorRgb`, `colorHex` et `colorSource`
+- `apparentMagnitudeG`, `absoluteMagnitudeG`, `visualBrightness` et `brightnessSource`
+
+Dans l'interface :
+
+- la fiche de selection affiche maintenant une estimation de brillance visuelle depuis le vaisseau
+- un slider `Taille apparente des etoiles` permet d'agrandir ou compresser le rendu sans toucher aux donnees physiques
 
 Workflow local :
 

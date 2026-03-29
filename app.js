@@ -9,6 +9,8 @@ import {
 const sceneRoot = document.querySelector("#sceneRoot");
 const densityRange = document.querySelector("#densityRange");
 const densityValue = document.querySelector("#densityValue");
+const sizeRange = document.querySelector("#sizeRange");
+const sizeValue = document.querySelector("#sizeValue");
 const boundaryToggle = document.querySelector("#boundaryToggle");
 const shellToggle = document.querySelector("#shellToggle");
 const labelsToggle = document.querySelector("#labelsToggle");
@@ -102,6 +104,11 @@ densityRange.addEventListener("input", () => {
   rebuildSimulation();
 });
 
+sizeRange.addEventListener("input", () => {
+  refreshSizeLabel();
+  applySizeScale();
+});
+
 boundaryToggle.addEventListener("change", () => {
   groups.boundary.visible = boundaryToggle.checked;
 });
@@ -129,9 +136,11 @@ init();
 
 async function init() {
   refreshDensityLabel();
+  refreshSizeLabel();
   await loadGaiaCatalog();
   rebuildSimulation();
   resetShip(true);
+  applySizeScale();
   animate();
 }
 
@@ -234,6 +243,7 @@ function rebuildDeepSky() {
   const positions = [];
   const colors = [];
   const sizes = [];
+  const brightnesses = [];
   const twinkles = [];
   const shellRadius = 360;
   const count = Math.round(Number.parseInt(densityRange.value, 10) * 1.1);
@@ -251,6 +261,7 @@ function rebuildDeepSky() {
     positions.push(x, y, z);
     colors.push(color.r, color.g, color.b);
     sizes.push(1.2 + random() * 4.6);
+    brightnesses.push(0.28 + random() * 0.52);
     twinkles.push(random());
   }
 
@@ -258,6 +269,7 @@ function rebuildDeepSky() {
   geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
   geometry.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
   geometry.setAttribute("aSize", new THREE.Float32BufferAttribute(sizes, 1));
+  geometry.setAttribute("aBrightness", new THREE.Float32BufferAttribute(brightnesses, 1));
   geometry.setAttribute("aTwinkle", new THREE.Float32BufferAttribute(twinkles, 1));
 
   state.deepSkyPoints = new THREE.Points(geometry, starMaterial);
@@ -271,12 +283,16 @@ function createPointCloud(stars, options) {
   const positions = [];
   const colors = [];
   const sizes = [];
+  const brightnesses = [];
   const twinkles = [];
 
   stars.forEach((star) => {
     positions.push(star.position.x, star.position.y, star.position.z);
     colors.push(star.color.r, star.color.g, star.color.b);
     sizes.push(star.renderSize * options.sizeMultiplier);
+    brightnesses.push(
+      THREE.MathUtils.clamp(star.visualBrightness * options.alphaScale, 0.08, 1),
+    );
     twinkles.push(star.twinkle);
   });
 
@@ -284,6 +300,7 @@ function createPointCloud(stars, options) {
   geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
   geometry.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
   geometry.setAttribute("aSize", new THREE.Float32BufferAttribute(sizes, 1));
+  geometry.setAttribute("aBrightness", new THREE.Float32BufferAttribute(brightnesses, 1));
   geometry.setAttribute("aTwinkle", new THREE.Float32BufferAttribute(twinkles, 1));
 
   const cloud = new THREE.Points(geometry, starMaterial);
@@ -300,6 +317,17 @@ function enrichStar(star) {
   const color = star.colorRgb
     ? rgbToThreeColor(star.colorRgb)
     : temperatureToColor(star.temperatureK);
+  const luminositySolarResolved = Number.isFinite(star.luminositySolar)
+    ? Math.max(star.luminositySolar, 0.000001)
+    : estimateLuminosityFromRadiusAndTemperature(star.radiusSolar, star.temperatureK);
+  const apparentMagnitude = Number.isFinite(star.apparentMagnitudeG)
+    ? star.apparentMagnitudeG
+    : Number.isFinite(star.photGMeanMag)
+      ? star.photGMeanMag
+      : estimateApparentMagnitude(star.distanceLy, luminositySolarResolved);
+  const visualBrightness = Number.isFinite(star.visualBrightness)
+    ? star.visualBrightness
+    : apparentMagnitudeToVisualBrightness(apparentMagnitude);
   const renderSize = THREE.MathUtils.clamp(
     Math.pow(star.radiusSolar, 0.42) * (star.synthetic ? 2.2 : 4.6),
     star.synthetic ? 1.3 : 3,
@@ -310,6 +338,9 @@ function enrichStar(star) {
     ...star,
     position: new THREE.Vector3(positionSource.x, positionSource.y, positionSource.z),
     color,
+    luminositySolarResolved,
+    apparentMagnitude,
+    visualBrightness,
     renderSize,
     twinkle: Math.random(),
   };
@@ -588,6 +619,14 @@ function refreshDensityLabel() {
   densityValue.textContent = densityRange.value;
 }
 
+function refreshSizeLabel() {
+  sizeValue.textContent = `${Number.parseFloat(sizeRange.value).toFixed(1)}x`;
+}
+
+function applySizeScale() {
+  starMaterial.uniforms.uSizeScale.value = Number.parseFloat(sizeRange.value);
+}
+
 function setStatus(message) {
   statusText.textContent = message;
 }
@@ -633,11 +672,11 @@ function setSelectedStar(star) {
   selectedName.textContent = star.displayName ?? star.name;
   selectedName.style.color = star.colorHex ?? "#f5f8ff";
 
-  const distanceFromShip = state.ship
-    ? state.ship.position.distanceTo(star.position).toFixed(1)
-    : "0.0";
+  const distanceFromShipLy = state.ship
+    ? state.ship.position.distanceTo(star.position)
+    : 0;
 
-  selectedMeta.textContent = formatSelectedStarMeta(star, distanceFromShip);
+  selectedMeta.textContent = formatSelectedStarMeta(star, distanceFromShipLy);
 }
 
 function createSunAnchor() {
@@ -695,31 +734,38 @@ function createStarMaterial() {
     blending: THREE.AdditiveBlending,
     uniforms: {
       uTime: { value: 0 },
+      uSizeScale: { value: 1 },
     },
     vertexShader: `
       uniform float uTime;
+      uniform float uSizeScale;
       attribute float aSize;
+      attribute float aBrightness;
       attribute float aTwinkle;
       varying vec3 vColor;
       varying float vAlpha;
+      varying float vBrightness;
 
       void main() {
         vColor = color;
         vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
         float twinkle = 0.82 + 0.18 * sin(uTime * (0.55 + aTwinkle * 1.5) + aTwinkle * 12.0);
         vAlpha = twinkle;
+        vBrightness = aBrightness;
         float distanceScale = 160.0 / max(12.0, -mvPosition.z);
-        gl_PointSize = max(1.0, aSize * twinkle * distanceScale);
+        float brightnessBoost = mix(0.72, 1.75, clamp(aBrightness, 0.0, 1.0));
+        gl_PointSize = max(1.0, aSize * uSizeScale * brightnessBoost * twinkle * distanceScale);
         gl_Position = projectionMatrix * mvPosition;
       }
     `,
     fragmentShader: `
       varying vec3 vColor;
       varying float vAlpha;
+      varying float vBrightness;
 
       void main() {
         float d = distance(gl_PointCoord, vec2(0.5));
-        float alpha = smoothstep(0.52, 0.05, d) * vAlpha;
+        float alpha = smoothstep(0.52, 0.05, d) * vAlpha * mix(0.35, 1.0, clamp(vBrightness, 0.0, 1.0));
         gl_FragColor = vec4(vColor, alpha);
       }
     `,
@@ -849,13 +895,17 @@ function roundRect(context, x, y, width, height, radius) {
   context.closePath();
 }
 
-function formatSelectedStarMeta(star, distanceFromShip) {
+function formatSelectedStarMeta(star, distanceFromShipLy) {
+  const viewMagnitude = estimateApparentMagnitude(distanceFromShipLy, star.luminositySolarResolved);
+  const viewBrightness = apparentMagnitudeToVisualBrightness(viewMagnitude);
+  const brightnessPercent = Math.round(viewBrightness * 100);
   const parts = [
     star.type,
     `${star.distanceLy.toFixed(2)} a.l. du Soleil`,
     `${Math.round(star.temperatureK)} K`,
     `${star.radiusSolar.toFixed(2)} Rsol`,
-    `${distanceFromShip} a.l. du vaisseau`,
+    `${distanceFromShipLy.toFixed(1)} a.l. du vaisseau`,
+    `${brightnessLabelFromMagnitude(viewMagnitude)} (mag ${viewMagnitude.toFixed(1)}, ${brightnessPercent}%)`,
   ];
 
   if (star.radiusSource === "radius_flame") {
@@ -877,6 +927,59 @@ function formatSelectedStarMeta(star, distanceFromShip) {
 
 function rgbToThreeColor(rgb) {
   return new THREE.Color(rgb.r / 255, rgb.g / 255, rgb.b / 255);
+}
+
+function estimateLuminosityFromRadiusAndTemperature(radiusSolar, temperatureK) {
+  const safeRadius = Math.max(radiusSolar ?? 1, 0.01);
+  const safeTemperature = Math.max(temperatureK ?? 5772, 1000);
+  return Math.max(
+    0.000001,
+    Math.pow(safeRadius, 2) * Math.pow(safeTemperature / 5772, 4),
+  );
+}
+
+function estimateAbsoluteMagnitude(luminositySolar) {
+  return 4.83 - 2.5 * Math.log10(Math.max(luminositySolar, 0.000001));
+}
+
+function estimateApparentMagnitude(distanceLy, luminositySolar) {
+  if (!Number.isFinite(distanceLy) || distanceLy <= 0.00001) {
+    return -26.74;
+  }
+
+  const distancePc = Math.max(distanceLy / 3.26156, 0.000001);
+  return estimateAbsoluteMagnitude(luminositySolar) + 5 * (Math.log10(distancePc) - 1);
+}
+
+function apparentMagnitudeToVisualBrightness(apparentMagnitude) {
+  if (!Number.isFinite(apparentMagnitude)) {
+    return 0.4;
+  }
+
+  return THREE.MathUtils.clamp(
+    0.12 + Math.exp(-0.23 * (apparentMagnitude + 1.5)),
+    0.08,
+    1,
+  );
+}
+
+function brightnessLabelFromMagnitude(apparentMagnitude) {
+  if (apparentMagnitude <= 0) {
+    return "eclat extreme";
+  }
+  if (apparentMagnitude <= 3) {
+    return "tres brillante";
+  }
+  if (apparentMagnitude <= 6) {
+    return "brillante";
+  }
+  if (apparentMagnitude <= 9) {
+    return "visible";
+  }
+  if (apparentMagnitude <= 12) {
+    return "faible";
+  }
+  return "tres faible";
 }
 
 function applyKnownNameToGaiaStar(star) {

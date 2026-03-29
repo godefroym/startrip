@@ -78,6 +78,12 @@ Le JSON exporte inclut aussi des champs prets pour le rendu du jeu :
 - `colorRgb`
 - `colorHex`
 - `colorSource`
+- `apparentMagnitudeG`
+- `absoluteMagnitudeG`
+- `visualBrightness`
+- `brightnessSource`
+
+Attention : `visualBrightness` est une metrique de rendu compressee pour le jeu. Ce n'est pas une luminosite physique brute, mais une aide pour afficher une hierarchie visuelle lisible.
 
 ## Esquisse de requete Gaia
 
