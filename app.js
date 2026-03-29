@@ -22,9 +22,12 @@ const statusText = document.querySelector("#statusText");
 const selectedName = document.querySelector("#selectedName");
 const selectedMeta = document.querySelector("#selectedMeta");
 
+const initialWidth = Math.max(sceneRoot.clientWidth, 1);
+const initialHeight = Math.max(sceneRoot.clientHeight, 1);
+
 const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-renderer.setSize(sceneRoot.clientWidth, sceneRoot.clientHeight);
+renderer.setSize(initialWidth, initialHeight);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.18;
@@ -35,7 +38,7 @@ scene.fog = new THREE.FogExp2(0x03050e, 0.0028);
 
 const camera = new THREE.PerspectiveCamera(
   60,
-  sceneRoot.clientWidth / sceneRoot.clientHeight,
+  initialWidth / initialHeight,
   0.1,
   2200,
 );
@@ -536,9 +539,11 @@ function onKeyDown(event) {
 }
 
 function onResize() {
-  camera.aspect = sceneRoot.clientWidth / sceneRoot.clientHeight;
+  const width = Math.max(sceneRoot.clientWidth, 1);
+  const height = Math.max(sceneRoot.clientHeight, 1);
+  camera.aspect = width / height;
   camera.updateProjectionMatrix();
-  renderer.setSize(sceneRoot.clientWidth, sceneRoot.clientHeight);
+  renderer.setSize(width, height);
 }
 
 function refreshDensityLabel() {

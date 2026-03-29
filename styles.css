@@ -233,6 +233,7 @@ kbd {
 
 .viewport-panel {
   position: relative;
+  height: calc(100vh - 48px);
   min-height: calc(100vh - 48px);
   overflow: hidden;
   border-radius: 32px;
@@ -242,6 +243,11 @@ kbd {
     radial-gradient(circle at 84% 0%, rgba(110, 162, 255, 0.18), transparent 28%),
     linear-gradient(180deg, rgba(6, 10, 24, 0.98), rgba(1, 2, 7, 0.98));
   box-shadow: var(--shadow);
+}
+
+.scene-root {
+  position: absolute;
+  inset: 0;
 }
 
 .scene-root,
@@ -316,6 +322,7 @@ kbd {
   }
 
   .viewport-panel {
+    height: 68vh;
     min-height: 68vh;
   }
 }
